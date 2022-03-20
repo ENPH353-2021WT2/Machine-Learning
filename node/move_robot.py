@@ -16,17 +16,19 @@ class Robot_Controller:
 		rospy.init_node('camera_interpreter')
 		self.startup_flag = True
 		self.stop_flag = False
+		self.bridge = CvBridge()
 		self.startup_time = time.time()
 		self.driving_pub = rospy.Publisher('/R1/cmd_vel', Twist, queue_size=1)
 		self.license_pub = rospy.Publisher('/license_plate', String, queue_size=1)
+		self.processed_pub = rospy.Publisher('/R1/processed_image', Image, queue_size=1)
 		time.sleep(1)
 		self.image_sub = rospy.Subscriber('/R1/pi_camera/image_raw', Image, self.linefind)
 		rospy.spin()
 
+
 	#Callback function receives image and proccesses it into a command
 	def linefind(self, data):
-		bridge = CvBridge()
-		cv_image = bridge.imgmsg_to_cv2(data, desired_encoding='passthrough')
+		cv_image = self.bridge.imgmsg_to_cv2(data, desired_encoding='passthrough')
 
 		# If on startup, sends start timer command
 		if(self.startup_flag):
@@ -77,6 +79,49 @@ class Robot_Controller:
 			forward = 0.5
 			turn = -1
 			self.sendDriveCommand(forward, turn)
+
+		# new stuff
+		imHSV = cv2.cvtColor(cv_image, cv2.COLOR_RGB2HSV)
+		darkerGray = (0,0,60)
+		lighterGray = (0,0,150)
+
+		mask = cv2.inRange(imHSV, darkerGray, lighterGray)
+
+		imFiltered = cv2.bitwise_and(imHSV, imHSV, mask=mask)
+		#crop relevant area
+
+		imFiltered_RGB = cv2.cvtColor(imFiltered, cv2.COLOR_HSV2RGB)
+		imFiltered_gray = cv2.cvtColor(imFiltered, cv2.COLOR_RGB2GRAY) #y-values first
+
+		# print(imFiltered_gray[0][0].shape)
+
+		threshVal = 0
+		maxVal = 255
+		ret,thresh = cv2.threshold(imFiltered_gray,threshVal,maxVal,cv2.THRESH_BINARY_INV)
+		#having issues doing decision making for when line is not detected
+		contours,hierarchy = cv2.findContours(thresh[-400:-1], cv2.RETR_TREE,cv2.CHAIN_APPROX_SIMPLE)[-2:]
+
+		try:
+			biggestContour=max(contours, key=cv2.contourArea)
+		except:
+			forward = 0
+			turn = 3
+			self.sendDriveCommand(forward, turn)
+		if cv2.contourArea(biggestContour) < 1000: #why 1000
+			forward = 0
+			turn = 3
+			self.sendDriveCommand(forward, turn)
+			return
+
+		moment_array=cv2.moments(biggestContour)
+		try:
+			cx = int(moment_array['m10']/moment_array['m00'])
+			cy = int(moment_array['m01']/moment_array['m00'])
+		except ZeroDivisionError:
+			#how do i do nothing
+			print("divide by zero in moments")
+		width = len(imFiltered_gray[0])
+		rospy.loginfo("Width: " + str(width))
 		# rospy.loginfo("Forward value: " + str(forward)  + "Turn value: " + str(turn))
 
 	#called from lineDrive, publishes to cmd_vel so the car can drive.
@@ -86,6 +131,23 @@ class Robot_Controller:
 		move.linear.x = forwardAmount
 		move.angular.z = turnAmount
 		self.driving_pub.publish(move)
+
+	def scaleXCoord(self, coord, imWidth):
+		return coord - imWidth // 3
+
+	def turnRange(self, value, fromMin, fromMax, toMin, toMax):
+		fromRange = fromMax - fromMin
+		toRange = toMax - toMin
+
+		mappingValue = toRange / fromRange
+		output = value * mappingValue - 0.5
+		return output 
+
+	#http://wiki.ros.org/cv_bridge/Tutorials/ConvertingBetweenROSImagesAndOpenCVImagesPython
+	def publishPhoto(self, processed_image):
+		image_message = self.bridge.cv2_to_imgmsg(processed_image, encoding="passthrough")
+		self.processed_pub.publish(image_message)
+
 
 if __name__ == '__main__':
 	Robot_Controller()
