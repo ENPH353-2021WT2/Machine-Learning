@@ -17,11 +17,11 @@ class Robot_Controller:
 		self.startup_flag = True
 		self.stop_flag = False
 		self.bridge = CvBridge()
-		self.startup_time = time.time()
 		self.driving_pub = rospy.Publisher('/R1/cmd_vel', Twist, queue_size=1)
 		self.license_pub = rospy.Publisher('/license_plate', String, queue_size=1)
 		self.processed_pub = rospy.Publisher('/R1/processed_image', Image, queue_size=1)
 		time.sleep(1)
+		self.startup_time = time.time()
 		self.image_sub = rospy.Subscriber('/R1/pi_camera/image_raw', Image, self.linefind)
 		rospy.spin()
 
@@ -122,6 +122,7 @@ class Robot_Controller:
 			print("divide by zero in moments")
 		width = len(imFiltered_gray[0])
 		rospy.loginfo("Width: " + str(width))
+		self.publishPhoto(thresh[-400:-1])
 		# rospy.loginfo("Forward value: " + str(forward)  + "Turn value: " + str(turn))
 
 	#called from lineDrive, publishes to cmd_vel so the car can drive.
