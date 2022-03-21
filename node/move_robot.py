@@ -120,8 +120,8 @@ class Robot_Controller:
 		thickness = -1
 		white = (0,0,0)
 		black = (255,255,255)
-		road_drawn = cv2.circle(isolatedRoad, (CoM), radius, black, thickness)
-		road_drawn = cv2.circle(road_drawn, (CoM), radius // 2, white, thickness)
+		road_drawn = cv2.circle(isolatedRoad, CoM, radius, black, thickness)
+		road_drawn = cv2.circle(road_drawn, CoM, radius // 2, white, thickness)
 		image_message = self.bridge.cv2_to_imgmsg(road_drawn, encoding="passthrough")
 		self.road_pub.publish(image_message)
 
