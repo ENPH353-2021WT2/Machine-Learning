@@ -7,6 +7,7 @@ from cv_bridge import CvBridge
 import cv2
 from std_msgs.msg import String
 import time
+from robot_states import Robot_State
 
 class Robot_Controller:
 	# Set class constants here
@@ -15,6 +16,7 @@ class Robot_Controller:
 
 	def __init__(self):
 		rospy.init_node('camera_interpreter')
+		self.drive_state = Robot_State(1)
 		self.startup_flag = True
 		self.stop_flag = False
 		self.bridge = CvBridge()
