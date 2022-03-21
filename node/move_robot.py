@@ -63,7 +63,7 @@ class Robot_Controller:
 			print("divide by zero in moments")
 
 		#Determining Driving Command
-		forward = 0.5
+		forward = 0.25
 		maxTurnAmount = 10
 		minTurnAmount = -maxTurnAmount
 		width = len(roadPhoto[0])
