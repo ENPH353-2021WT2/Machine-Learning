@@ -7,14 +7,17 @@ from cv_bridge import CvBridge
 import cv2
 from std_msgs.msg import String
 import time
+from robot_states import Robot_State
 
 class Robot_Controller:
 	# Set class constants here
 	COMPETITION_TIME = 5
 	DEBUG = False
+	LEFT_TURN_TIME = 1.5
 
 	def __init__(self):
 		rospy.init_node('camera_interpreter')
+		self.drive_state = Robot_State.LEFT_TURN
 		self.startup_flag = True
 		self.stop_flag = False
 		self.bridge = CvBridge()
@@ -29,6 +32,9 @@ class Robot_Controller:
 
 	#Callback function receives image and proccesses it into a command
 	def linefind(self, data):
+
+		print(self.drive_state)
+		
 		# If on startup, sends start timer command
 		if(self.startup_flag):
 			self.license_pub.publish(str('TeamRed,multi21,0,XR58'))
@@ -38,6 +44,10 @@ class Robot_Controller:
 		if (time.time() > self.startup_time + self.COMPETITION_TIME) and (self.stop_flag == False):
 			self.license_pub.publish(str('TeamRed,multi21,-1,XR58'))
 			self.stop_flag = True
+
+		# Want robot to turn left on startup, for a specified amount of time
+		if time.time() > self.startup_time + self.LEFT_TURN_TIME:
+			self.drive_state = Robot_State.DRIVE_FORWARD
 
 		#Processes camera feed to just show the road.
 		roadPhoto = self.roadIsolation(data)
@@ -63,11 +73,11 @@ class Robot_Controller:
 			print("divide by zero in moments")
 
 		#Determining Driving Command
-		forward = 0.25
-		maxTurnAmount = 10
+		maxTurnAmount = 5
 		minTurnAmount = -maxTurnAmount
 		width = len(roadPhoto[0])
 		turn = self.turnRange(cx, 0, width, minTurnAmount, maxTurnAmount)
+		forward = 0.4
 		self.sendDriveCommand(forward, -turn)
 		rospy.loginfo("Forward value: " + str(forward)  + "Turn value: " + str(turn))
 
@@ -76,7 +86,13 @@ class Robot_Controller:
 
 	def roadIsolation(self, imgmsg):
 		cv_image = self.bridge.imgmsg_to_cv2(imgmsg, desired_encoding='passthrough')
-		cv_image_cropped = cv_image[-400:-1]
+		width = len(cv_image[0])
+
+		# Depending on state, will crop the image accordingly
+		if self.drive_state == Robot_State.DRIVE_FORWARD:
+			cv_image_cropped = cv_image[-400:-200,500:width-500]
+		elif self.drive_state == Robot_State.LEFT_TURN:
+			cv_image_cropped = cv_image[-400:-1,600:width]
 
 		imHSV = cv2.cvtColor(cv_image_cropped, cv2.COLOR_RGB2HSV)
 		darkerGray = (0,0,60)
