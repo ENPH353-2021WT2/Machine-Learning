@@ -25,43 +25,9 @@ class plateFinder:
 				img = cv2.imread(os.path.join(self.folder,filename))
 				if img is not None:
 					self.images.append([img, filename])
-
 			for img in self.images:
-				currPhoto = self.plateIsolation(img[0])
-				contours,hierarchy = cv2.findContours(currPhoto, cv2.RETR_TREE,cv2.CHAIN_APPROX_SIMPLE)[-2:]
-				try:
-					biggestContour=max(contours, key=cv2.contourArea)
-					print(str(cv2.contourArea(biggestContour)) + " " + img[1])
-					contourIndex = -1
-					color = (0,255,0)
-					thickness = 1
-					#we need square brackets because drawContours expects a list of ndarrays
-					# outimg = cv2.drawContours(img[0], [biggestContour], contourIndex, color,thickness)
-
-					#approximating and detecting quadrilaterals
-					approx = cv2.approxPolyDP(biggestContour, 0.009 * cv2.arcLength(biggestContour, True), True)
-					outimg = cv2.drawContours(img[0], [approx], contourIndex, color,thickness)
-					print(approx)
-					print(approx.shape)
-					if len(approx) == 4:
-						xi = approx[0][0][0]
-						xf = approx[2][0][0]
-						
-						yi = approx[0][0][1]
-						yf = approx[2][0][1]
-						yf_new = yf + int(0.3 * (yf-yi))
-						# outimg = img[0][yi:yf_new, xi:xf]
-						outimg = self.shiftPerspective(approx, outimg)
-					cv2.imwrite(self.outFolder + "/out_" + img[1], outimg)
-				except Exception,e:
-					print str(e)
-					contourIndex = -1
-					color = (0,255,0)
-					thickness = 1
-					outimg = cv2.drawContours(img[0], contours, contourIndex, color, thickness)
-					cv2.imwrite(self.outFolder + "/out_" + img[1], outimg)
-					print("No contours in image")
-					continue
+				currPhoto = self.callback(img[0])
+				cv2.imwrite(self.outFolder + "/out_" + img[1], currPhoto)
 
 		elif not self.DEBUG: #typical analysis with photos from Gazebo
 			rospy.init_node('license_plate_analysis')
@@ -69,6 +35,43 @@ class plateFinder:
 			time.sleep(1)
 			self.image_sub = rospy.Subscriber('/R1/pi_camera/image_raw', Image, self.callback)
 			rospy.spin()
+
+	def callback(self, data):
+		if not self.DEBUG:
+			raw_img = self.bridge.imgmsg_to_cv2(data, desired_encoding='passthrough')
+			isolatedImg = self.plateIsolation(data)
+		elif self.DEBUG:
+			raw_img = data
+			isolatedImg = self.plateIsolation(data)
+
+		#Finding the largest continuous shape in image
+		contours,hierarchy = cv2.findContours(isolatedImg, cv2.RETR_TREE,cv2.CHAIN_APPROX_SIMPLE)[-2:]
+		biggestContour=max(contours, key=cv2.contourArea)
+
+		#Approximating contour into a shape
+		approx = cv2.approxPolyDP(biggestContour, 0.009 * cv2.arcLength(biggestContour, True), True)
+
+		#diagnostic drawing around largest shape
+		color = (0,255,0)
+		thickness = 1
+		contourIndex = -1
+		# outimg = cv2.drawContours(raw_img, [approx], contourIndex, color, thickness)
+
+		outimg = raw_img
+		#Checking if approx is a quadrilateral
+		if len(approx) == 4:
+			xi = approx[0][0][0]
+			xf = approx[2][0][0]
+			
+			yi = approx[0][0][1]
+			yf = approx[2][0][1]
+			outimg = self.shiftPerspective(approx, raw_img)
+
+		# outimg = cv2.cvtColor(outimg, cv2.COLOR_HSV2RGB)
+		if not self.DEBUG:
+			self.publishPlatePhoto(outimg)
+		elif self.DEBUG:
+			return outimg
 
 	def shiftPerspective(self, approx, img):
 		#Computing perspectiveshift and warpperspective
@@ -110,12 +113,6 @@ class plateFinder:
 		for point in pointSet:
 			newImg = cv2.circle(newImg, (point[0],point[1]), radius, color, thickness)
 		return newImg
-
-	def callback(self, data):
-		photo = self.plateIsolation(data)
-		contours,hierarchy = cv2.findContours(currPhoto, cv2.RETR_TREE,cv2.CHAIN_APPROX_SIMPLE)[-2:]
-		self.publishPlatePhoto(photo)
-
 
 	def plateIsolation(self, imgmsg):
 		"""Processes driving feed to show just the big rectangles from the license rears of cars.
@@ -160,7 +157,7 @@ class plateFinder:
 		isolatedRoad : Image
 			Driving feed processed to just a road in black-and-white
 		"""
-		image_message = self.bridge.cv2_to_imgmsg(isolatedPlates, encoding="passthrough")
+		image_message = self.bridge.cv2_to_imgmsg(isolatedPlates, encoding="rgb8")
 		self.license_photo_pub.publish(image_message)
 
 if __name__ == '__main__':
