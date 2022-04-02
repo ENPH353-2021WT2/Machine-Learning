@@ -34,7 +34,7 @@ class plateFinder:
 					print(str(cv2.contourArea(biggestContour)) + " " + img[1])
 					contourIndex = -1
 					color = (0,255,0)
-					thickness = 2
+					thickness = 1
 					#we need square brackets because drawContours expects a list of ndarrays
 					# outimg = cv2.drawContours(img[0], [biggestContour], contourIndex, color,thickness)
 
@@ -52,18 +52,18 @@ class plateFinder:
 						yf_new = yf + int(0.3 * (yf-yi))
 						# outimg = img[0][yi:yf_new, xi:xf]
 						outimg = self.shiftPerspective(approx, outimg)
-
 					cv2.imwrite(self.outFolder + "/out_" + img[1], outimg)
 				except Exception,e:
 					print str(e)
 					contourIndex = -1
 					color = (0,255,0)
-					thickness = 2
+					thickness = 1
 					outimg = cv2.drawContours(img[0], contours, contourIndex, color, thickness)
 					cv2.imwrite(self.outFolder + "/out_" + img[1], outimg)
 					print("No contours in image")
 					continue
-		else: #typical analysis with photos from Gazebo
+
+		elif not self.DEBUG: #typical analysis with photos from Gazebo
 			rospy.init_node('license_plate_analysis')
 			self.license_photo_pub = rospy.Publisher('R1/license_photo', Image, queue_size=1)
 			time.sleep(1)
@@ -71,7 +71,6 @@ class plateFinder:
 			rospy.spin()
 
 	def shiftPerspective(self, approx, img):
-		#CURRENTLY WIP. DOESN'T SHIFT PROPERLY, AND CUTS OFF PLATE!!
 		#Computing perspectiveshift and warpperspective
 		#https://theailearner.com/tag/cv2-warpperspective/
 		#(x,y) pairs
@@ -91,16 +90,30 @@ class plateFinder:
 		input_pts = np.float32([TL, BL, BR, TR])
 		output_pts = np.float32([[0,0], 
 						[0,max_height - 1],
-						[max_height - 1, max_width - 1],
+						[max_width - 1, max_height - 1],
 						[max_width - 1, 0]])
 
 		M = cv2.getPerspectiveTransform(input_pts, output_pts)
-		newImg = cv2.warpPerspective(img,M,(max_width, max_height),flags=cv2.INTER_LINEAR)
+		# newImg = self.drawCorners(img, input_pts, (0,255,0))
+		# newImg = self.drawCorners(newImg, output_pts, (255,0,0))
+		fixedImg = cv2.warpPerspective(img,M,(max_width, max_height+50),flags=cv2.INTER_LINEAR)
+		new_height = int(max_height * 1.25)
+
+		#cropping photo to show just the license plate
+		plateImg = fixedImg[max_height:new_height,:]
+		return plateImg
+
+	def drawCorners(self, img, pointSet, color):
+		newImg = img
+		radius = 5
+		thickness = 5
+		for point in pointSet:
+			newImg = cv2.circle(newImg, (point[0],point[1]), radius, color, thickness)
 		return newImg
 
 	def callback(self, data):
 		photo = self.plateIsolation(data)
-		rospy.loginfo("asdf")
+		contours,hierarchy = cv2.findContours(currPhoto, cv2.RETR_TREE,cv2.CHAIN_APPROX_SIMPLE)[-2:]
 		self.publishPlatePhoto(photo)
 
 
