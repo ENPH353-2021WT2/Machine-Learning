@@ -13,7 +13,7 @@ import numpy as np
 
 
 class plateFinder:
-	DEBUG = 1
+	DEBUG = 0
 	def __init__(self):
 		self.bridge = CvBridge()
 		if self.DEBUG: #reads images from a folder
@@ -57,7 +57,7 @@ class plateFinder:
 		contourIndex = -1
 		# outimg = cv2.drawContours(raw_img, [approx], contourIndex, color, thickness)
 
-		outimg = raw_img
+		# outimg = raw_img
 		#Checking if approx is a quadrilateral
 		if len(approx) == 4:
 			xi = approx[0][0][0]
@@ -67,11 +67,48 @@ class plateFinder:
 			yf = approx[2][0][1]
 			outimg = self.shiftPerspective(approx, raw_img)
 
+
 		# outimg = cv2.cvtColor(outimg, cv2.COLOR_HSV2RGB)
 		if not self.DEBUG:
-			self.publishPlatePhoto(outimg)
+			if self.checkLicensePlate(outimg):
+				self.publishPlatePhoto(outimg)
 		elif self.DEBUG:
 			return outimg
+
+	def checkLicensePlate(self, img):
+		"""Analyzes a photo to see if it is suitable to be sent to the NN
+
+		Parameters
+		----------
+		img : Image
+			Photo that is cropped from our image feed.
+
+		Returns
+		----------
+		True if photo fits our definition of a plate
+		False if photo does not fit our definition
+		"""
+
+		#Image shape analysis
+		#Note that the actual plate ratio is 2
+		largestRatio = 5
+		lowestRatio = 1.5
+		y_dim = len(img)
+		x_dim = len(img[0])
+		imgRatio = x_dim / y_dim
+		if imgRatio >largestRatio:
+			return False
+		if imgRatio < lowestRatio:
+			return False
+
+		#Checking if 2 adjacent pixels are the same
+		if np.all(img[0][0] == img[0][1]):
+			return False
+		#TODO: Checking that there are 4 characters?
+
+		else:
+			return True
+
 
 	def shiftPerspective(self, approx, img):
 		#Computing perspectiveshift and warpperspective
