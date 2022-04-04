@@ -73,6 +73,7 @@ class Robot_Controller:
 		self.stop_flag = False
 		self.left_turn_flag = True
 		self.ignore_red_flag = False
+		self.prev_frame = np.zeros((120,480,3))
 		self.bridge = CvBridge()
 		self.driving_pub = rospy.Publisher('/R1/cmd_vel', Twist, queue_size=1)
 		self.license_pub = rospy.Publisher('/license_plate', String, queue_size=1)
@@ -95,7 +96,7 @@ class Robot_Controller:
         data : imgmsg
             the photo (as imgmsg) passed by image_sub
         """
-		print(self.drive_state)
+		# print(self.drive_state)
 		# If on startup, sends start timer command
 		if(self.startup_flag):
 			self.license_pub.publish(str('TeamRed,multi21,0,XR58'))
@@ -115,10 +116,21 @@ class Robot_Controller:
 			turn = 0
 			self.sendDriveCommand(forward, turn)
 			# Do something
-			if time.time() > self.pedestrian_start_time + 3:
+			current_frame = self.getPedestrianFrame(data)
+			difference_mat = self.prev_frame - current_frame
+
+			Z, Y, X = np.where(difference_mat==0)
+			# print(not np.any(difference_mat))
+			print(len(X))
+
+			# print(current_frame)
+
+			if time.time() > self.pedestrian_start_time + 30:
 				self.drive_state = Robot_State.DRIVE_FORWARD
 				self.ignore_red_flag = True
 				self.pedestrian_start_time = time.time()
+
+			self.prev_frame = current_frame
 
 
 		# Driving State
@@ -174,6 +186,7 @@ class Robot_Controller:
 			if redPoints >= self.RED_THRESHOLD and not self.ignore_red_flag:
 				self.drive_state = Robot_State.PEDESTRIAN
 				self.pedestrian_start_time = time.time()
+				self.prev_frame = self.getPedestrianFrame()
 
 
 
@@ -311,6 +324,13 @@ class Robot_Controller:
 		image_message = self.bridge.cv2_to_imgmsg(thresh, encoding="passthrough")
 		self.crosswalk_pub.publish(image_message)
 		return len(X)
+
+	def getPedestrianFrame(self, imgmsg):
+		cv_image = self.bridge.imgmsg_to_cv2(imgmsg, desired_encoding='passthrough')
+		height = len(cv_image)
+		width = len(cv_image[0])
+		cv_image = cv_image[300:height-300,400:width-400]
+		return cv_image
 
 if __name__ == '__main__':
 	Robot_Controller()
