@@ -8,6 +8,7 @@ import cv2
 from std_msgs.msg import String
 import time
 from robot_states import Robot_State
+import numpy as np
 
 class Robot_Controller:
 	"""
@@ -62,6 +63,7 @@ class Robot_Controller:
 		self.driving_pub = rospy.Publisher('/R1/cmd_vel', Twist, queue_size=1)
 		self.license_pub = rospy.Publisher('/license_plate', String, queue_size=1)
 		self.road_pub = rospy.Publisher('/R1/road_image', Image, queue_size=1)
+		self.crosswalk_pub = rospy.Publisher('/R1/crosswalk_image', Image, queue_size=1)
 		time.sleep(1)
 		self.startup_time = time.time()
 		self.image_sub = rospy.Subscriber('/R1/pi_camera/image_raw', Image, self.linefind)
@@ -95,6 +97,9 @@ class Robot_Controller:
 
 		#Processes camera feed to just show the road.
 		roadPhoto = self.roadIsolation(data)
+
+		#Detects crosswalk red line
+		self.detectCrosswalk(data)
 
 		#Logic for driving
 		contours,hierarchy = cv2.findContours(roadPhoto, cv2.RETR_TREE,cv2.CHAIN_APPROX_SIMPLE)[-2:]
@@ -230,6 +235,37 @@ class Robot_Controller:
 		road_drawn = cv2.circle(road_drawn, CoM, radius // 2, white, thickness)
 		image_message = self.bridge.cv2_to_imgmsg(road_drawn, encoding="passthrough")
 		self.road_pub.publish(image_message)
+
+	def detectCrosswalk(self, imgmsg):
+		"""Processes driving feed to detect red crosswalk line
+
+        Parameters
+        ----------
+        imgmsg : imgmsg
+            a photo of the robot's driving feed
+        """
+        #Convert from imgmsg
+		cv_image = self.bridge.imgmsg_to_cv2(imgmsg, desired_encoding='passthrough')
+		width = len(cv_image[0])
+
+		# Crop image for optimal crosswalk detection
+		cv_image_cropped = cv_image[-400:-1]
+
+		#convert photo to HSV and isolate for road with mask
+		imHSV = cv2.cvtColor(cv_image_cropped, cv2.COLOR_RGB2HSV)
+		lowerBound = (0,100,20)
+		upperBound = (10,255,255)
+		mask = cv2.inRange(imHSV, lowerBound, upperBound)
+
+		# binary mask (convert to black and white)
+		val, thresh = cv2.threshold(mask,127,255,cv2.THRESH_BINARY)
+		Y, X = np.where(thresh==255)
+
+		print('Number of Red Points: ' + str(len(X)))
+
+		#publish image message
+		image_message = self.bridge.cv2_to_imgmsg(thresh, encoding="passthrough")
+		self.crosswalk_pub.publish(image_message)
 
 if __name__ == '__main__':
 	Robot_Controller()
