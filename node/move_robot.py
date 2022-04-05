@@ -9,6 +9,7 @@ from std_msgs.msg import String
 import time
 from robot_states import Robot_State
 import numpy as np
+from matplotlib import pyplot as plt
 
 class Robot_Controller:
 	"""
@@ -39,6 +40,8 @@ class Robot_Controller:
 		Time needed to complete a left turn in seconds
 	RED_THRESHOLD : int
 		Experimentally determined for deciding when to stop robot for crosswalk
+	PED_WHITE_THRESHOLD : int
+		Experimentally determined for when pedestrian movement is detected
 
 	startup_flag : boolean
 		Used to send start signal to scorekeeper.
@@ -60,6 +63,7 @@ class Robot_Controller:
 	DEBUG = False
 	LEFT_TURN_TIME = 1.5
 	RED_THRESHOLD = 5000
+	PED_WHITE_THRESHOLD = 1000
 
 	def __init__(self):
 		"""Sets up all instance variables, mainly pub/sub and timing.
@@ -73,7 +77,9 @@ class Robot_Controller:
 		self.stop_flag = False
 		self.left_turn_flag = True
 		self.ignore_red_flag = False
-		self.prev_frame = np.zeros((120,480,3))
+		self.first_run = True
+		# Size of raw image (720, 1280, 3)
+		self.prev_frame = np.zeros((720, 1280, 3))
 		self.bridge = CvBridge()
 		self.driving_pub = rospy.Publisher('/R1/cmd_vel', Twist, queue_size=1)
 		self.license_pub = rospy.Publisher('/license_plate', String, queue_size=1)
@@ -115,26 +121,52 @@ class Robot_Controller:
 			forward = 0
 			turn = 0
 			self.sendDriveCommand(forward, turn)
-			# Do something
+			
 			current_frame = self.getPedestrianFrame(data)
-			difference_mat = self.prev_frame - current_frame
+			# If first loop, use same image
+			if self.first_run:
+				self.prev_frame = current_frame
+				self.first_run = False
 
-			Z, Y, X = np.where(difference_mat==0)
-			# print(not np.any(difference_mat))
-			print(len(X))
+			# print(current_frame.shape)
+			
+			# cv2.imshow("frame", self.prev_frame)
+			# cv2.waitKey(3)
+			gray_current = cv2.cvtColor(current_frame, cv2.COLOR_BGR2GRAY)
+			gray_prev = cv2.cvtColor(self.prev_frame, cv2.COLOR_BGR2GRAY)
 
-			# print(current_frame)
 
-			if time.time() > self.pedestrian_start_time + 30:
+			# Compute difference image
+			difference_img = cv2.absdiff(gray_current, gray_prev)
+			ret, thresh = cv2.threshold(difference_img, 30, 255, cv2.THRESH_BINARY)
+			image_message = self.bridge.cv2_to_imgmsg(thresh, encoding="passthrough")
+			self.crosswalk_pub.publish(image_message)
+
+			# Detects pedestrian movement in front of robot
+			if time.time() > self.pedestrian_start_time + 1.5:
+				Y, X = np.where(thresh==255)
+				print("Number of white points: ", len(X))
+
+				if len(X) >= self.PED_WHITE_THRESHOLD:
+					self.drive_state = Robot_State.DRIVE_FORWARD
+					self.ignore_red_flag = True
+					self.pedestrian_start_time = time.time()
+					print("Pedestrian detected!!!")
+
+			# Waits for 5 seconds and then goes in event that pedestrian is stuck
+			if time.time() > self.pedestrian_start_time + 5:
 				self.drive_state = Robot_State.DRIVE_FORWARD
 				self.ignore_red_flag = True
 				self.pedestrian_start_time = time.time()
+				print("Time's up!")
 
+			# Updates previous frame
 			self.prev_frame = current_frame
 
-
+		
 		# Driving State
 		elif self.drive_state == Robot_State.DRIVE_FORWARD:
+
 
 			# Want robot to turn left on startup, for a specified amount of time
 			if time.time() > self.startup_time + self.LEFT_TURN_TIME:
@@ -322,14 +354,14 @@ class Robot_Controller:
 
 		#publish image message
 		image_message = self.bridge.cv2_to_imgmsg(thresh, encoding="passthrough")
-		self.crosswalk_pub.publish(image_message)
+		# self.crosswalk_pub.publish(image_message)
 		return len(X)
 
 	def getPedestrianFrame(self, imgmsg):
 		cv_image = self.bridge.imgmsg_to_cv2(imgmsg, desired_encoding='passthrough')
 		height = len(cv_image)
 		width = len(cv_image[0])
-		cv_image = cv_image[300:height-300,400:width-400]
+		cv_image = cv_image[200:height-200,300:width-300]
 		return cv_image
 
 if __name__ == '__main__':
