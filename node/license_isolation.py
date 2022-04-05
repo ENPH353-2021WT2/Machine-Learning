@@ -10,6 +10,15 @@ import time
 import os
 import matplotlib.pyplot as plt
 import numpy as np
+import tensorflow as tf
+from tensorflow import keras
+
+# %tensorflow_version 1.14.0
+# from tensorflow.keras import layers
+# from tensorflow.keras import models
+# from tensorflow.keras import optimizers
+# from tensorflow.keras.utils import plot_model
+# from tensorflow.keras import backend
 
 
 class plateFinder:
@@ -55,6 +64,8 @@ class plateFinder:
         """
         self.counter = 0
         self.bridge = CvBridge()
+        self.conv_model = tf.keras.models.load_model('my_model')
+        print(self.conv_model.summary())
         self.errorFolder = "/home/fizzer/ros_ws/src/Machine-Learning/output_images/err"
         if not self.DEBUG: #typical analysis with photos from Gazebo
             rospy.init_node('license_plate_analysis')
@@ -351,6 +362,17 @@ class plateFinder:
             cv2.destroyAllWindows()
 
         #letterImages can now be sent to NN for analysis
+        X_dataset_orig = np.array([data[0] for data in letterImages])
+        X_dataset = X_dataset_orig/255
+        y_predict = self.conv_model.predict(X_dataset)
+        y_predict = np.argmax(y_predict, axis=1)
+        print(num_to_char(y_predict))
+
+    def num_to_char(num):
+        if num <= 25:
+            return chr(ord('A')+num)
+        else:
+            return chr(ord('0')+num-26)
 
     def publishPlatePhoto(self, isolatedPlates):
         """Publishes a diagnostic photo of the road with just license plate to
