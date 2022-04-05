@@ -28,6 +28,8 @@ class Robot_Controller:
 		Publishes license plate numbers and start/stop commands
 	road_pub : Publisher
 		Publishes diagnostic photo of road isolated from environment
+	crosswalk_pub : Publisher
+		Publishes diagnostic feed of pedestrian movement
 
     COMPETITION_TIME : int
     	Represents competition duration in seconds. It is used to turn on/off a
@@ -50,6 +52,8 @@ class Robot_Controller:
 		Used to turn car left without changing state
 	ignore_red_flag : boolean
 		Used to bypass other red line after having stopped for pedestrian
+	first_run: boolean
+		Used to indicate when pedestrian state is run for first time
 	startup_time : float
 		keeps track of competition duration.
 	pedestrian_start_time : float
