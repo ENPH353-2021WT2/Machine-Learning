@@ -153,8 +153,8 @@ class Robot_Controller:
 					self.pedestrian_start_time = time.time()
 					print("Pedestrian detected!!!")
 
-			# Waits for 5 seconds and then goes in event that pedestrian is stuck
-			if time.time() > self.pedestrian_start_time + 5:
+			# Waits for 6 seconds and then goes in event that pedestrian is stuck
+			if time.time() > self.pedestrian_start_time + 6:
 				self.drive_state = Robot_State.DRIVE_FORWARD
 				self.ignore_red_flag = True
 				self.pedestrian_start_time = time.time()
