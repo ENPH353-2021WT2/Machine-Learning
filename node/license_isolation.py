@@ -13,9 +13,49 @@ import numpy as np
 
 
 class plateFinder:
-    DEBUG = 0
+    """
+    Class used to process image feed for license plates and analyze plate numbers.
+    ...
+
+    Attributes
+    ----------
+    DEBUG : Boolean
+        Changes input from live driving feed to file directory of images
+    counter : int
+        For debugging, allows us to save photos with unique filenames
+    errorFolder : string
+        Rejected license plates are saved to this folder
+    bridge : CvBridge
+        Used to convert cv2 images to/from imgmsg for pub/sub
+    license_photo_pub: Publisher
+        diagnostic feed for analyzed plates
+    image_sub : Subscriber
+        raw driving feed from robot in Gazebo
+    images : list
+        Debugging purposes, used to store photos from file directory
+    folder : String
+        Debugging, input folder for photos
+    outFolder : String
+        Debugging output folder for analysis
+    currPlate : Image
+        Fully cropped license plate taken from current frame of video feed.
+    currThresh : Image
+        Black-and-white version of currPlate with letters thresholded
+    cntSort : List
+        List of contours corresp. to currThresh sorted by area
+    """
+    DEBUG = False
     def __init__(self):
+        """Sets up all instance variables, mainly pub/sub and timing.
+
+        There is a time.sleep(1) to prevent any messages from being 
+        published before being registered with the master node.
+
+        If DEBUG, images come from a folder instead of ROS.
+        """
+        self.counter = 0
         self.bridge = CvBridge()
+        self.errorFolder = "/home/fizzer/ros_ws/src/Machine-Learning/output_images/err"
         if not self.DEBUG: #typical analysis with photos from Gazebo
             rospy.init_node('license_plate_analysis')
             self.license_photo_pub = rospy.Publisher('R1/license_photo', Image, queue_size=1)
@@ -34,17 +74,21 @@ class plateFinder:
                     self.images.append([img, filename])
 
             for img in self.images:
-                try:
-                    currPhoto = self.callback(img[0])
+                currPhoto = self.callback(img[0])
                     
-                    cv2.imwrite(self.outFolder + "/out_" + img[1], currPhoto)
-                except UnboundLocalError:
-                    print("No license plate found in " + img[1])
-
-
-
+                # cv2.imwrite(self.outFolder + "/out_" + img[1], currPhoto)
+                # except UnboundLocalError:
+                # print("No license plate found in " + img[1])
 
     def callback(self, data):
+        """Callback function that analyzes each frame of video feed for processing.
+
+        Parameters
+        ----------
+        data : imgmsg
+            the photo (as imgmsg) passed by image_sub
+        """
+        #Convert from imgmsg
         if not self.DEBUG:
             raw_img = self.bridge.imgmsg_to_cv2(data, desired_encoding='passthrough')
             isolatedImg = self.plateIsolation(data)
@@ -74,12 +118,17 @@ class plateFinder:
             yf = approx[2][0][1]
             outimg = self.shiftPerspective(approx, raw_img)
 
+        #check for existence
+        if 'outimg' not in locals():
+            return
 
         # outimg = cv2.cvtColor(outimg, cv2.COLOR_HSV2RGB)
 
         if self.checkLicensePlate(outimg):
+            letters = self.analyzePlate()
             if not self.DEBUG:
-                self.publishPlatePhoto(outimg)
+                # self.publishPlatePhoto(outimg)
+                return
             elif self.DEBUG:
                 return outimg
 
@@ -90,6 +139,10 @@ class plateFinder:
         ----------
         imgmsg : imgmsg
             a photo of the robot's driving feed
+
+        Returns
+        ----------
+        Image of input feed thresholded to just show rears
         """
         #Convert from imgmsg
         if self.DEBUG:
@@ -118,6 +171,15 @@ class plateFinder:
         return outputImage
 
     def shiftPerspective(self, approx, img):
+        """Function used to 'unwarp' images for a straight perspective
+
+        Parameters
+        ----------
+        approx : List
+            List of four tuples corresponding to the four corners of
+            the back of a car
+        img : Image
+        """
         #Computing perspectiveshift and warpperspective
         #https://theailearner.com/tag/cv2-warpperspective/
         #(x,y) pairs
@@ -164,13 +226,14 @@ class plateFinder:
         False if photo does not fit our definition
         """
 
-        #Image shape analysis
-        #Note that the actual plate ratio is 2
+        #Image shape analysis. Note that 'perfect' plate has ratio of 2
+        self.counter += 1
         largestRatio = 5
-        lowestRatio = 1.5
+        lowestRatio = 2
         y_dim = len(img)
         x_dim = len(img[0])
         imgRatio = x_dim / y_dim
+
         if imgRatio >largestRatio:
             return False
         if imgRatio < lowestRatio:
@@ -180,20 +243,114 @@ class plateFinder:
         if np.all(img[0][0] == img[0][1]):
             return False
 
-        #TODO: Checking that there are 4 characters
-        # im_gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-        # contours,hierarchy = cv2.findContours(img, cv2.RETR_TREE,cv2.CHAIN_APPROX_SIMPLE)[-2:]
-        # out = cv2.drawContours(img, contours=contours, contourIdx=-1, color=(0, 255, 0), thickness=2, lineType=cv2.LINE_AA)
-        else:
-            return True
+        #Checking if there are 4 blobs in the license plate
+        if self.DEBUG:
+            #cv2.imread() uses BGR
+            plateHSV = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+        elif not self.DEBUG:
+            #bridge.imgmsg_to_cv2 uses RGB
+            plateHSV = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
+        highBlue = (182,255,227)
+        lowBlue = (115,113,90)
+        plateMask = cv2.inRange(plateHSV, lowBlue, highBlue)
+        plateFiltered = cv2.bitwise_and(plateHSV, plateHSV, mask=plateMask)
 
-    def drawCorners(self, img, pointSet, color):
-        newImg = img
-        radius = 5
-        thickness = 5
-        for point in pointSet:
-            newImg = cv2.circle(newImg, (point[0],point[1]), radius, color, thickness)
-        return newImg
+        plate_RGB = cv2.cvtColor(plateFiltered, cv2.COLOR_HSV2RGB)
+        plate_gray = cv2.cvtColor(plate_RGB, cv2.COLOR_RGB2GRAY)
+        threshVal = 0
+        maxVal = 255
+        ret,thresh = cv2.threshold(plate_gray,threshVal,maxVal,cv2.THRESH_BINARY)
+
+        contours,hierarchy = cv2.findContours(thresh, cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)[-2:]
+        # out = cv2.drawContours(img, contours, contourIdx=-1, color=(0, 255, 0), thickness=1, lineType=cv2.LINE_AA)
+        if self.DEBUG:
+            cv2.imshow('plate', thresh)
+            cv2.waitKey(0)
+            cv2.destroyAllWindows()
+            cv2.imwrite(self.outFolder + "/diag/" + str(self.counter) + "plate.png", thresh)
+        # if not self.DEBUG:
+        #     self.publishPlatePhoto(thresh)
+        print("Contour Length: " + str(len(contours)))
+        if len(contours) < 4:
+            cv2.imwrite(self.errorFolder + "/" + str(self.counter) + "plate.png", img)
+            return False
+
+        cntSort = sorted(contours, key=cv2.contourArea, reverse=True)
+        sumTopFour = 0
+        for cnt in cntSort[:4]:
+            sumTopFour += cv2.contourArea(cnt)
+        print(sumTopFour)
+        if sumTopFour < 180:
+            return False
+
+        #If we're here, then we've passed all the tests and believe this is a valid plate.
+        #Save the raw plate, threshold, and contours for analysis in another function.
+        self.currPlate = img
+        self.currThresh = thresh
+        self.currContours = cntSort
+
+        return True
+
+    def analyzePlate(self):
+        """Cuts up a photo into 4 letters, sends to NN and receives a response.
+        This function analyzes class variables currPlate, currThresh, currContours.
+        We do this to save time in recalculating contours and thresholding.
+
+        This function should only be called when a new plate has been isolated.
+        
+        Returns
+        ----------
+        String containing the letters of the license plate.
+        """
+        newImg = self.currPlate
+        #Draw a rectangle on the top four contours
+        letters = [0,1,2,3]
+        for i, cnt in enumerate(self.currContours[:4]):
+            x,y,w,h = cv2.boundingRect(cnt)
+            letters[i] = [x,y,w,h]
+            # newImg = cv2.rectangle(newImg,(x,y),(x+w,y+h),(0,255,0),1)
+
+        #sort letters by x-dimension
+        #https://stackoverflow.com/questions/3121979/how-to-sort-a-list-tuple-of-lists-tuples-by-the-element-at-a-given-index
+        sortedLetters = sorted(letters, key=lambda tup:tup[0])
+        # print(sortedLetters)
+
+        #Extending dimensions
+        for let in sortedLetters:
+            let[0] = max(let[0] - 1, 0)
+            let[1] = max(let[1] - 1, 0)
+            let[2] = let[2] + 2
+            let[3] = let[3] + 2
+
+        #Drawing letters onto a blank canvas
+        maxHeight = max(sortedLetters, key=lambda hei:hei[3])[-1]
+        maxWidth = max(sortedLetters, key=lambda wid:wid[2])[-1]
+
+        #Hard-coded dimension for resizing
+        maxDim = 25
+        testCanvas = np.ones((maxDim * 5, maxDim, 3), np.uint8)
+        testCanvas *= 255
+        currHeight = 0
+        letterImages = [0,1,2,3]
+
+        for i, let in enumerate(sortedLetters):
+            x = let[0]
+            y = let[1]
+            w = let[2]
+            h = let[3]
+
+            letterImages[i] = cv2.resize(self.currPlate[y:y+h,x:x+w], (maxDim, maxDim))
+            testCanvas[currHeight:currHeight+maxDim,0:maxDim] = letterImages[i]
+            currHeight += maxDim + 1
+            
+        if not self.DEBUG:
+            self.publishPlatePhoto(testCanvas)
+        elif self.DEBUG:
+            cv2.imshow('plate', newImg)
+            cv2.waitKey(0)
+            cv2.destroyAllWindows()
+
+        #letterImages can now be sent to NN for analysis
 
     def publishPlatePhoto(self, isolatedPlates):
         """Publishes a diagnostic photo of the road with just license plate to
