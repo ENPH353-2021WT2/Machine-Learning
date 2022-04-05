@@ -9,7 +9,6 @@ from std_msgs.msg import String
 import time
 from robot_states import Robot_State
 import numpy as np
-from matplotlib import pyplot as plt
 
 class Robot_Controller:
 	"""
