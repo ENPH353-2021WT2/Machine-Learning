@@ -28,19 +28,36 @@ class Robot_Controller:
 		Publishes license plate numbers and start/stop commands
 	road_pub : Publisher
 		Publishes diagnostic photo of road isolated from environment
+	crosswalk_pub : Publisher
+		Publishes diagnostic feed of pedestrian movement
 
     COMPETITION_TIME : int
-    	Represents competition duration. It is used to turn on/off a
+    	Represents competition duration in seconds. It is used to turn on/off a
     	timing command which is sent to the scorekeeper
     DEBUG : boolean
 		Allows for easier debugging. If True, the car stops moving 
 		but continues to trasmit its processed feed.
+	LEFT_TURN_TIME : int
+		Time needed to complete a left turn in seconds
+	RED_THRESHOLD : int
+		Experimentally determined for deciding when to stop robot for crosswalk
+	PED_WHITE_THRESHOLD : int
+		Experimentally determined for when pedestrian movement is detected
+
 	startup_flag : boolean
 		Used to send start signal to scorekeeper.
 	stop_flag : boolean
 		Used to send stop signal to scorekeeper.
+	left_turn_flag : boolean
+		Used to turn car left without changing state
+	ignore_red_flag : boolean
+		Used to bypass other red line after having stopped for pedestrian
+	first_run: boolean
+		Used to indicate when pedestrian state is run for first time
 	startup_time : float
 		keeps track of competition duration.
+	pedestrian_start_time : float
+		Keeps track of time after having passed pedestrian crosswalk
 	bridge : CvBridge
 		Used to convert cv2 images to/from imgmsg for pub/sub
     """
@@ -48,6 +65,8 @@ class Robot_Controller:
 	COMPETITION_TIME = 5
 	DEBUG = False
 	LEFT_TURN_TIME = 1.5
+	RED_THRESHOLD = 5000
+	PED_WHITE_THRESHOLD = 1000
 
 	def __init__(self):
 		"""Sets up all instance variables, mainly pub/sub and timing.
@@ -56,9 +75,14 @@ class Robot_Controller:
         published before being registered with the master node.
         """
 		rospy.init_node('camera_interpreter')
-		self.drive_state = Robot_State.LEFT_TURN
+		self.drive_state = Robot_State.DRIVE_FORWARD
 		self.startup_flag = True
 		self.stop_flag = False
+		self.left_turn_flag = True
+		self.ignore_red_flag = False
+		self.first_run = True
+		# Size of raw image (720, 1280, 3)
+		self.prev_frame = np.zeros((720, 1280, 3))
 		self.bridge = CvBridge()
 		self.driving_pub = rospy.Publisher('/R1/cmd_vel', Twist, queue_size=1)
 		self.license_pub = rospy.Publisher('/license_plate', String, queue_size=1)
@@ -66,6 +90,7 @@ class Robot_Controller:
 		self.crosswalk_pub = rospy.Publisher('/R1/crosswalk_image', Image, queue_size=1)
 		time.sleep(1)
 		self.startup_time = time.time()
+		self.pedestrian_start_time = 0
 		self.image_sub = rospy.Subscriber('/R1/pi_camera/image_raw', Image, self.linefind)
 		rospy.spin()
 
@@ -80,7 +105,7 @@ class Robot_Controller:
         data : imgmsg
             the photo (as imgmsg) passed by image_sub
         """
-		print(self.drive_state)
+		# print(self.drive_state)
 		# If on startup, sends start timer command
 		if(self.startup_flag):
 			self.license_pub.publish(str('TeamRed,multi21,0,XR58'))
@@ -91,47 +116,114 @@ class Robot_Controller:
 			self.license_pub.publish(str('TeamRed,multi21,-1,XR58'))
 			self.stop_flag = True
 
-		# Want robot to turn left on startup, for a specified amount of time
-		if time.time() > self.startup_time + self.LEFT_TURN_TIME:
-			self.drive_state = Robot_State.DRIVE_FORWARD
+		
+		### STATE MACHINE BELOW ###
 
-		#Processes camera feed to just show the road.
-		roadPhoto = self.roadIsolation(data)
-
-		#Detects crosswalk red line
-		self.detectCrosswalk(data)
-
-		#Logic for driving
-		contours,hierarchy = cv2.findContours(roadPhoto, cv2.RETR_TREE,cv2.CHAIN_APPROX_SIMPLE)[-2:]
-		try:
-			biggestContour=max(contours, key=cv2.contourArea)
-		except:
+		# Pedestrian State
+		if self.drive_state == Robot_State.PEDESTRIAN:
 			forward = 0
-			turn = 3
+			turn = 0
 			self.sendDriveCommand(forward, turn)
-		if cv2.contourArea(biggestContour) < 1000: #why 1000
-			forward = 0
-			turn = 3
-			self.sendDriveCommand(forward, turn)
-			return
-		moment_array=cv2.moments(biggestContour)
-		try:
-			cx = int(moment_array['m10']/moment_array['m00'])
-			cy = int(moment_array['m01']/moment_array['m00'])
-		except ZeroDivisionError:
-			print("divide by zero in moments")
+			
+			current_frame = self.getPedestrianFrame(data)
+			# If first loop, use same image
+			if self.first_run:
+				self.prev_frame = current_frame
+				self.first_run = False
 
-		#Determining Driving Command
-		maxTurnAmount = 5
-		minTurnAmount = -maxTurnAmount
-		width = len(roadPhoto[0])
-		turn = self.turnRange(cx, 0, width, minTurnAmount, maxTurnAmount)
-		forward = 0.4
-		self.sendDriveCommand(forward, -turn)
-		rospy.loginfo("Forward value: " + str(forward)  + "Turn value: " + str(turn))
+			# print(current_frame.shape)
+			
+			# cv2.imshow("frame", self.prev_frame)
+			# cv2.waitKey(3)
+			gray_current = cv2.cvtColor(current_frame, cv2.COLOR_BGR2GRAY)
+			gray_prev = cv2.cvtColor(self.prev_frame, cv2.COLOR_BGR2GRAY)
 
-		#Drawing diagnostic photo
-		self.publishRoadCenter(roadPhoto, (cx, cy))
+
+			# Compute difference image
+			difference_img = cv2.absdiff(gray_current, gray_prev)
+			ret, thresh = cv2.threshold(difference_img, 30, 255, cv2.THRESH_BINARY)
+			image_message = self.bridge.cv2_to_imgmsg(thresh, encoding="passthrough")
+			self.crosswalk_pub.publish(image_message)
+
+			# Detects pedestrian movement in front of robot
+			if time.time() > self.pedestrian_start_time + 1.5:
+				Y, X = np.where(thresh==255)
+				print("Number of white points: ", len(X))
+
+				if len(X) >= self.PED_WHITE_THRESHOLD:
+					self.drive_state = Robot_State.DRIVE_FORWARD
+					self.ignore_red_flag = True
+					self.pedestrian_start_time = time.time()
+					print("Pedestrian detected!!!")
+
+			# Waits for 6 seconds and then goes in event that pedestrian is stuck
+			if time.time() > self.pedestrian_start_time + 6:
+				self.drive_state = Robot_State.DRIVE_FORWARD
+				self.ignore_red_flag = True
+				self.pedestrian_start_time = time.time()
+				print("Time's up!")
+
+			# Updates previous frame
+			self.prev_frame = current_frame
+
+		
+		# Driving State
+		elif self.drive_state == Robot_State.DRIVE_FORWARD:
+
+
+			# Want robot to turn left on startup, for a specified amount of time
+			if time.time() > self.startup_time + self.LEFT_TURN_TIME:
+				self.left_turn_flag = False
+
+			#Processes camera feed to just show the road.
+			roadPhoto = self.roadIsolation(data)
+
+			#Logic for driving
+			contours,hierarchy = cv2.findContours(roadPhoto, cv2.RETR_TREE,cv2.CHAIN_APPROX_SIMPLE)[-2:]
+			try:
+				biggestContour=max(contours, key=cv2.contourArea)
+			except:
+				forward = 0
+				turn = 3
+				self.sendDriveCommand(forward, turn)
+			if cv2.contourArea(biggestContour) < 1000: #why 1000
+				forward = 0
+				turn = 3
+				self.sendDriveCommand(forward, turn)
+				return
+			moment_array=cv2.moments(biggestContour)
+			try:
+				cx = int(moment_array['m10']/moment_array['m00'])
+				cy = int(moment_array['m01']/moment_array['m00'])
+			except ZeroDivisionError:
+				print("divide by zero in moments")
+
+			#Determining Driving Command
+			maxTurnAmount = 5
+			minTurnAmount = -maxTurnAmount
+			width = len(roadPhoto[0])
+			turn = self.turnRange(cx, 0, width, minTurnAmount, maxTurnAmount)
+			forward = 0.4
+			self.sendDriveCommand(forward, -turn)
+			# rospy.loginfo("Forward value: " + str(forward)  + "Turn value: " + str(turn))
+
+			#Drawing diagnostic photo
+			self.publishRoadCenter(roadPhoto, (cx, cy))
+
+			#Detects crosswalk red line
+			redPoints = self.detectCrosswalk(data)
+
+			# Stops ignoring red points after 4 seconds of passing pedestrian
+			if time.time() > self.pedestrian_start_time + 4:
+				self.ignore_red_flag = False
+
+			# If detects crosswalk, changes state
+			if redPoints >= self.RED_THRESHOLD and not self.ignore_red_flag:
+				self.drive_state = Robot_State.PEDESTRIAN
+				self.pedestrian_start_time = time.time()
+				self.prev_frame = self.getPedestrianFrame()
+
+
 
 	def roadIsolation(self, imgmsg):
 		"""Processes driving feed to show just the road.
@@ -145,10 +237,10 @@ class Robot_Controller:
 		cv_image = self.bridge.imgmsg_to_cv2(imgmsg, desired_encoding='passthrough')
 		width = len(cv_image[0])
 
-		# Depending on state, will crop the image accordingly
-		if self.drive_state == Robot_State.DRIVE_FORWARD:
+		# Depending on left turn or not, will crop the image accordingly
+		if not self.left_turn_flag:
 			cv_image_cropped = cv_image[-400:-200,500:width-500]
-		elif self.drive_state == Robot_State.LEFT_TURN:
+		else:
 			cv_image_cropped = cv_image[-400:-1,600:width]
 
 		#convert photo to HSV and isolate for road with mask
@@ -261,11 +353,19 @@ class Robot_Controller:
 		val, thresh = cv2.threshold(mask,127,255,cv2.THRESH_BINARY)
 		Y, X = np.where(thresh==255)
 
-		print('Number of Red Points: ' + str(len(X)))
+		# print('Number of Red Points: ' + str(len(X)))
 
 		#publish image message
 		image_message = self.bridge.cv2_to_imgmsg(thresh, encoding="passthrough")
-		self.crosswalk_pub.publish(image_message)
+		# self.crosswalk_pub.publish(image_message)
+		return len(X)
+
+	def getPedestrianFrame(self, imgmsg):
+		cv_image = self.bridge.imgmsg_to_cv2(imgmsg, desired_encoding='passthrough')
+		height = len(cv_image)
+		width = len(cv_image[0])
+		cv_image = cv_image[200:height-200,300:width-300]
+		return cv_image
 
 if __name__ == '__main__':
 	Robot_Controller()
