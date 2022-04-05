@@ -15,7 +15,9 @@ import numpy as np
 class plateFinder:
     DEBUG = 0
     def __init__(self):
+        self.counter = 0
         self.bridge = CvBridge()
+        self.errorFolder = "/home/fizzer/ros_ws/src/Machine-Learning/output_images/err"
         if not self.DEBUG: #typical analysis with photos from Gazebo
             rospy.init_node('license_plate_analysis')
             self.license_photo_pub = rospy.Publisher('R1/license_photo', Image, queue_size=1)
@@ -40,9 +42,6 @@ class plateFinder:
                     cv2.imwrite(self.outFolder + "/out_" + img[1], currPhoto)
                 except UnboundLocalError:
                     print("No license plate found in " + img[1])
-
-
-
 
     def callback(self, data):
         if not self.DEBUG:
@@ -74,6 +73,9 @@ class plateFinder:
             yf = approx[2][0][1]
             outimg = self.shiftPerspective(approx, raw_img)
 
+        #check for existence
+        if 'outimg' not in locals():
+            return
 
         # outimg = cv2.cvtColor(outimg, cv2.COLOR_HSV2RGB)
 
@@ -166,11 +168,13 @@ class plateFinder:
 
         #Image shape analysis
         #Note that the actual plate ratio is 2
+        self.counter += 1
         largestRatio = 5
-        lowestRatio = 1.5
+        lowestRatio = 2
         y_dim = len(img)
         x_dim = len(img[0])
         imgRatio = x_dim / y_dim
+
         if imgRatio >largestRatio:
             return False
         if imgRatio < lowestRatio:
@@ -180,12 +184,42 @@ class plateFinder:
         if np.all(img[0][0] == img[0][1]):
             return False
 
-        #TODO: Checking that there are 4 characters
-        # im_gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-        # contours,hierarchy = cv2.findContours(img, cv2.RETR_TREE,cv2.CHAIN_APPROX_SIMPLE)[-2:]
-        # out = cv2.drawContours(img, contours=contours, contourIdx=-1, color=(0, 255, 0), thickness=2, lineType=cv2.LINE_AA)
-        else:
-            return True
+        #Checking if there are 4 blobs in the license plate
+        if self.DEBUG:
+            #cv2.imread() uses BGR
+            plateHSV = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+        elif not self.DEBUG:
+            #bridge.imgmsg_to_cv2 uses RGB
+            plateHSV = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
+        lowBlue = (96,95,90)
+        highBlue = (182,204,190)
+        plateMask = cv2.inRange(plateHSV, lowBlue, highBlue)
+        plateFiltered = cv2.bitwise_and(plateHSV, plateHSV, mask=plateMask)
+        plate_RGB = cv2.cvtColor(plateFiltered, cv2.COLOR_HSV2RGB)
+        plate_gray = cv2.cvtColor(plate_RGB, cv2.COLOR_RGB2GRAY)
+
+        #change to pure black/white photo for maximum contrast
+        threshVal = 0
+        maxVal = 255
+        ret,thresh = cv2.threshold(plate_gray,threshVal,maxVal,cv2.THRESH_BINARY)
+        contours,hierarchy = cv2.findContours(thresh, cv2.RETR_TREE,cv2.CHAIN_APPROX_SIMPLE)[-2:]
+        # out = cv2.drawContours(img, contours, contourIdx=-1, color=(0, 255, 0), thickness=1, lineType=cv2.LINE_AA)
+        if self.DEBUG:
+            cv2.imwrite(self.outFolder + "/diag/" + str(self.counter) + "plate.png", thresh)
+
+        if len(contours) < 10:
+            cv2.imwrite(self.errorFolder + "/" + str(self.counter) + "plate.png", img)
+            return False
+
+        cntSort = sorted(contours, key=cv2.contourArea, reverse=True)
+        sumTopFour = 0
+        for i in range(4):
+            sumTopFour += cv2.contourArea(cntSort[i])
+        print(sumTopFour)
+        if sumTopFour < 100:
+            return False
+
+        return True
 
     def drawCorners(self, img, pointSet, color):
         newImg = img
