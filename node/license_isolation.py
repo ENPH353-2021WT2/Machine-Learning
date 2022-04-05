@@ -317,15 +317,18 @@ class plateFinder:
 
         #Extending dimensions
         for let in sortedLetters:
-            x = max(let[0] - 2, 0)
-            y = max(let[1] - 2, 0)
-            w = let[2] + 4
-            h = let[3] + 3
+            let[0] = max(let[0] - 1, 0)
+            let[1] = max(let[1] - 1, 0)
+            let[2] = let[2] + 2
+            let[3] = let[3] + 2
 
         #Drawing letters onto a blank canvas
-        maxHeight = max(sortedLetters, key=lambda hei:hei[3])[-1] + 10
-        maxWidth = max(sortedLetters, key=lambda wid:wid[2])[-1] + 10
-        testCanvas = np.ones((maxHeight * 5, maxWidth, 3), np.uint8)
+        maxHeight = max(sortedLetters, key=lambda hei:hei[3])[-1]
+        maxWidth = max(sortedLetters, key=lambda wid:wid[2])[-1]
+
+        #Hard-coded dimension for resizing
+        maxDim = 25
+        testCanvas = np.ones((maxDim * 5, maxDim, 3), np.uint8)
         testCanvas *= 255
         currHeight = 0
         letterImages = [0,1,2,3]
@@ -336,14 +339,9 @@ class plateFinder:
             w = let[2]
             h = let[3]
 
-            print(let)
-            letterImages[i] = self.pad_image(maxHeight, 
-                                            maxWidth,
-                                            self.currPlate[y:y+h,x:x+w])
-            print("Height: " + str(maxHeight))
-            print("Width: " + str(maxWidth))
-            testCanvas[currHeight:currHeight+maxHeight,0:maxWidth] = letterImages[i]
-            currHeight += maxHeight + 5
+            letterImages[i] = cv2.resize(self.currPlate[y:y+h,x:x+w], (maxDim, maxDim))
+            testCanvas[currHeight:currHeight+maxDim,0:maxDim] = letterImages[i]
+            currHeight += maxDim + 1
             
         if not self.DEBUG:
             self.publishPlatePhoto(testCanvas)
@@ -352,29 +350,7 @@ class plateFinder:
             cv2.waitKey(0)
             cv2.destroyAllWindows()
 
-        #letterImages can be sent to NN for analysis
-        return
-
-    def pad_image(self, new_height, new_width, img):
-        """
-        pads input img to a new height and width.
-        New_height and new_width must be >= the original dimensions.
-        """
-        old_height, old_width, channels = img.shape
-
-        color = (0,0,0) #black
-        output_img = np.full((new_height,new_width, channels), color, dtype=np.uint8)
-
-        y_center = (new_height - old_height) // 2
-        x_center = (new_width - old_width) // 2
-
-        print("New height " + str(new_height))
-        print("New width " + str(new_width))
-        print("Old height " + str(old_height))
-        print("Old width " + str(old_width))
-        output_img[y_center:y_center + old_height, x_center:x_center + old_width] = img
-
-        return output_img
+        #letterImages can now be sent to NN for analysis
 
     def publishPlatePhoto(self, isolatedPlates):
         """Publishes a diagnostic photo of the road with just license plate to
