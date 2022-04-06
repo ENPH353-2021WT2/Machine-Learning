@@ -34,6 +34,8 @@ class plateFinder:
         Changes input from live driving feed to file directory of images
     counter : int
         For debugging, allows us to save photos with unique filenames
+    timer : float
+        To time how long license plate data has not been detected by robot 
     errorFolder : string
         Rejected license plates are saved to this folder
     bridge : CvBridge
@@ -65,13 +67,18 @@ class plateFinder:
         If DEBUG, images come from a folder instead of ROS.
         """
         self.counter = 0
+        self.last_license_time = time.time()
+        self.published_plate = False
+        self.plate_num = 1
         self.bridge = CvBridge()
-        self.conv_model = models.load_model('my_model')
+        self.pub_str = ''
+        self.conv_model = models.load_model('my_model1')
         print(self.conv_model.summary())
         self.errorFolder = "/home/fizzer/ros_ws/src/Machine-Learning/output_images/err"
         if not self.DEBUG: #typical analysis with photos from Gazebo
             rospy.init_node('license_plate_analysis')
             self.license_photo_pub = rospy.Publisher('R1/license_photo', Image, queue_size=1)
+            self.license_pub = rospy.Publisher('/license_plate', String, queue_size=1)
             time.sleep(1)
             self.image_sub = rospy.Subscriber('/R1/pi_camera/image_raw', Image, self.callback)
             rospy.spin()
@@ -144,6 +151,12 @@ class plateFinder:
                 return
             elif self.DEBUG:
                 return outimg
+
+        # Checks if current plate was published already and if it is last image
+        if self.published_plate == False and time.time() >= self.last_license_time + 1:
+            self.license_pub.publish(self.pub_str)
+            self.plate_num += 1
+            self.published_plate = True
 
     def plateIsolation(self, imgmsg):
         """Processes driving feed to show just the big rectangles from the license rears of cars.
@@ -338,7 +351,7 @@ class plateFinder:
         maxWidth = max(sortedLetters, key=lambda wid:wid[2])[-1]
 
         #Hard-coded dimension for resizing
-        maxDim = 25
+        maxDim = 32
         testCanvas = np.ones((maxDim * 5, maxDim), np.uint8)
         testCanvas *= 255
         currHeight = 0
@@ -351,7 +364,7 @@ class plateFinder:
             h = let[3]
 
             letterImages[i] = cv2.resize(self.currThresh[y:y+h,x:x+w], (maxDim, maxDim))
-            b, letterImages[i] = cv2.threshold(letterImages[i], 30, 255, cv2.THRESH_BINARY)
+            # b, letterImages[i] = cv2.threshold(letterImages[i], 100, 255, cv2.THRESH_BINARY)
             testCanvas[currHeight:currHeight+maxDim,0:maxDim] = letterImages[i]
             currHeight += maxDim + 1
 
@@ -359,34 +372,44 @@ class plateFinder:
         if not self.DEBUG:
             self.publishPlatePhoto(testCanvas)
 
-        print(testCanvas.shape)
         #letterImages can now be sent to NN for analysis
         X_dataset_orig = np.array(letterImages)
-        X_dataset = X_dataset_orig/255.0
-        # y_predict = self.conv_model.predict(X_dataset)
-        # y_predict = np.argmax(y_predict, axis=1)
-        # print(num_to_char(y_predict))
 
-        # global sess1
-        # global graph1
-        # with graph1.as_default():
-        #     set_session(sess1)
-        #     pred1 = self.conv_model.predict(X_dataset)[0]
-        #     pred2 = self.conv_model.predict(X_dataset)[1]
-        #     pred3 = self.conv_model.predict(X_dataset)[2]
-        #     pred4 = self.conv_model.predict(X_dataset)[3]
-        #     pred_num1 = np.argmax(pred1)
-        #     pred_num2 = np.argmax(pred2)
-        #     pred_num3 = np.argmax(pred3)
-        #     pred_num4 = np.argmax(pred4)
-        #     print(self.num_to_char(pred_num1))
-        #     print(self.num_to_char(pred_num2))
-        #     print(self.num_to_char(pred_num3))
-        #     print(self.num_to_char(pred_num4))
-        #     print(" ")
+        # Normalize dataset
+        X_dataset_norm = X_dataset_orig/255.0
+        X_dataset = np.expand_dims(X_dataset_norm, axis=-1)
+
+        global sess1
+        global graph1
+        with graph1.as_default():
+            set_session(sess1)
+            pred = self.conv_model.predict(X_dataset)
+
+            pred_num1 = np.argmax(pred[0])
+            pred_num2 = np.argmax(pred[1])
+            pred_num3 = np.argmax(pred[2])
+            pred_num4 = np.argmax(pred[3])
+            pred_char1 = self.num_to_char(pred_num1)
+            pred_char2 = self.num_to_char(pred_num2)
+            pred_char3 = self.num_to_char(pred_num3)
+            pred_char4 = self.num_to_char(pred_num4)
+            print(pred_char1)
+            print(pred_char2)
+            print(pred_char3)
+            print(pred_char4)
+            print(" ")
 
         cv2.imshow("X_dataset", X_dataset[0])
         cv2.waitKey(3)
+
+        # String message to publish
+        self.pub_str = 'TeamRed,multi21,' + str(self.plate_num) + ',' + str(pred_char1) + str(pred_char2) + str(pred_char3) + str(pred_char4)
+
+        # Update last time a license plate was detected
+        self.last_license_time = time.time()
+
+        # Unables publishing again
+        self.published_plate = False
 
         
     def num_to_char(self, num):
