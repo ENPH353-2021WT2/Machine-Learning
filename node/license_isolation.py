@@ -315,13 +315,11 @@ class plateFinder:
         ----------
         String containing the letters of the license plate.
         """
-        newImg = self.currPlate
-        #Draw a rectangle on the top four contours
+                #Draw a rectangle on the top four contours
         letters = [0,1,2,3]
         for i, cnt in enumerate(self.currContours[:4]):
             x,y,w,h = cv2.boundingRect(cnt)
             letters[i] = [x,y,w,h]
-            # newImg = cv2.rectangle(newImg,(x,y),(x+w,y+h),(0,255,0),1)
 
         #sort letters by x-dimension
         #https://stackoverflow.com/questions/3121979/how-to-sort-a-list-tuple-of-lists-tuples-by-the-element-at-a-given-index
@@ -341,7 +339,7 @@ class plateFinder:
 
         #Hard-coded dimension for resizing
         maxDim = 25
-        testCanvas = np.ones((maxDim * 5, maxDim, 3), np.uint8)
+        testCanvas = np.ones((maxDim * 5, maxDim), np.uint8)
         testCanvas *= 255
         currHeight = 0
         letterImages = [0,1,2,3]
@@ -352,18 +350,16 @@ class plateFinder:
             w = let[2]
             h = let[3]
 
-            letterImages[i] = cv2.resize(self.currPlate[y:y+h,x:x+w], (maxDim, maxDim))
+            letterImages[i] = cv2.resize(self.currThresh[y:y+h,x:x+w], (maxDim, maxDim))
+            b, letterImages[i] = cv2.threshold(letterImages[i], 30, 255, cv2.THRESH_BINARY)
             testCanvas[currHeight:currHeight+maxDim,0:maxDim] = letterImages[i]
             currHeight += maxDim + 1
-            letterImages[i] = cv2.cvtColor(letterImages[i],cv2.COLOR_RGB2BGR)
+
             
         if not self.DEBUG:
             self.publishPlatePhoto(testCanvas)
-        elif self.DEBUG:
-            cv2.imshow('plate', newImg)
-            cv2.waitKey(0)
-            cv2.destroyAllWindows()
 
+        print(testCanvas.shape)
         #letterImages can now be sent to NN for analysis
         X_dataset_orig = np.array(letterImages)
         X_dataset = X_dataset_orig/255.0
@@ -371,29 +367,28 @@ class plateFinder:
         # y_predict = np.argmax(y_predict, axis=1)
         # print(num_to_char(y_predict))
 
-        global sess1
-        global graph1
-        with graph1.as_default():
-            set_session(sess1)
-            pred1 = self.conv_model.predict(X_dataset)[0]
-            pred2 = self.conv_model.predict(X_dataset)[1]
-            pred3 = self.conv_model.predict(X_dataset)[2]
-            pred4 = self.conv_model.predict(X_dataset)[3]
-            pred_num1 = np.argmax(pred1)
-            pred_num2 = np.argmax(pred2)
-            pred_num3 = np.argmax(pred3)
-            pred_num4 = np.argmax(pred4)
-            print(self.num_to_char(pred_num1))
-            print(self.num_to_char(pred_num2))
-            print(self.num_to_char(pred_num3))
-            print(self.num_to_char(pred_num4))
-            print(" ")
+        # global sess1
+        # global graph1
+        # with graph1.as_default():
+        #     set_session(sess1)
+        #     pred1 = self.conv_model.predict(X_dataset)[0]
+        #     pred2 = self.conv_model.predict(X_dataset)[1]
+        #     pred3 = self.conv_model.predict(X_dataset)[2]
+        #     pred4 = self.conv_model.predict(X_dataset)[3]
+        #     pred_num1 = np.argmax(pred1)
+        #     pred_num2 = np.argmax(pred2)
+        #     pred_num3 = np.argmax(pred3)
+        #     pred_num4 = np.argmax(pred4)
+        #     print(self.num_to_char(pred_num1))
+        #     print(self.num_to_char(pred_num2))
+        #     print(self.num_to_char(pred_num3))
+        #     print(self.num_to_char(pred_num4))
+        #     print(" ")
 
-        cv2.imshow("frame", X_dataset[0])
+        cv2.imshow("X_dataset", X_dataset[0])
         cv2.waitKey(3)
 
         
-
     def num_to_char(self, num):
         if num <= 25:
             return chr(ord('A')+num)
@@ -409,7 +404,7 @@ class plateFinder:
         isolatedRoad : Image
             Driving feed processed to just a road in black-and-white
         """
-        image_message = self.bridge.cv2_to_imgmsg(isolatedPlates, encoding="rgb8")
+        image_message = self.bridge.cv2_to_imgmsg(isolatedPlates, encoding="passthrough")
         self.license_photo_pub.publish(image_message)
 
 if __name__ == '__main__':
