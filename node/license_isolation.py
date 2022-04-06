@@ -15,11 +15,13 @@ from tensorflow import keras
 
 # %tensorflow_version 1.14.0
 # from tensorflow.keras import layers
-# from tensorflow.keras import models
-# from tensorflow.keras import optimizers
-# from tensorflow.keras.utils import plot_model
-# from tensorflow.keras import backend
+from tensorflow.keras import models
+from tensorflow.python.keras.backend import set_session
+from tensorflow.python.keras.models import load_model
 
+sess1 = tf.Session()
+graph1 = tf.get_default_graph()
+set_session(sess1)
 
 class plateFinder:
     """
@@ -64,7 +66,7 @@ class plateFinder:
         """
         self.counter = 0
         self.bridge = CvBridge()
-        self.conv_model = tf.keras.models.load_model('my_model')
+        self.conv_model = models.load_model('my_model')
         print(self.conv_model.summary())
         self.errorFolder = "/home/fizzer/ros_ws/src/Machine-Learning/output_images/err"
         if not self.DEBUG: #typical analysis with photos from Gazebo
@@ -281,7 +283,7 @@ class plateFinder:
             cv2.imwrite(self.outFolder + "/diag/" + str(self.counter) + "plate.png", thresh)
         # if not self.DEBUG:
         #     self.publishPlatePhoto(thresh)
-        print("Contour Length: " + str(len(contours)))
+        # print("Contour Length: " + str(len(contours)))
         if len(contours) < 4:
             cv2.imwrite(self.errorFolder + "/" + str(self.counter) + "plate.png", img)
             return False
@@ -290,7 +292,7 @@ class plateFinder:
         sumTopFour = 0
         for cnt in cntSort[:4]:
             sumTopFour += cv2.contourArea(cnt)
-        print(sumTopFour)
+        # print(sumTopFour)
         if sumTopFour < 180:
             return False
 
@@ -353,6 +355,7 @@ class plateFinder:
             letterImages[i] = cv2.resize(self.currPlate[y:y+h,x:x+w], (maxDim, maxDim))
             testCanvas[currHeight:currHeight+maxDim,0:maxDim] = letterImages[i]
             currHeight += maxDim + 1
+            letterImages[i] = cv2.cvtColor(letterImages[i],cv2.COLOR_RGB2BGR)
             
         if not self.DEBUG:
             self.publishPlatePhoto(testCanvas)
@@ -362,13 +365,36 @@ class plateFinder:
             cv2.destroyAllWindows()
 
         #letterImages can now be sent to NN for analysis
-        X_dataset_orig = np.array([data[0] for data in letterImages])
-        X_dataset = X_dataset_orig/255
-        y_predict = self.conv_model.predict(X_dataset)
-        y_predict = np.argmax(y_predict, axis=1)
-        print(num_to_char(y_predict))
+        X_dataset_orig = np.array(letterImages)
+        X_dataset = X_dataset_orig/255.0
+        # y_predict = self.conv_model.predict(X_dataset)
+        # y_predict = np.argmax(y_predict, axis=1)
+        # print(num_to_char(y_predict))
 
-    def num_to_char(num):
+        global sess1
+        global graph1
+        with graph1.as_default():
+            set_session(sess1)
+            pred1 = self.conv_model.predict(X_dataset)[0]
+            pred2 = self.conv_model.predict(X_dataset)[1]
+            pred3 = self.conv_model.predict(X_dataset)[2]
+            pred4 = self.conv_model.predict(X_dataset)[3]
+            pred_num1 = np.argmax(pred1)
+            pred_num2 = np.argmax(pred2)
+            pred_num3 = np.argmax(pred3)
+            pred_num4 = np.argmax(pred4)
+            print(self.num_to_char(pred_num1))
+            print(self.num_to_char(pred_num2))
+            print(self.num_to_char(pred_num3))
+            print(self.num_to_char(pred_num4))
+            print(" ")
+
+        cv2.imshow("frame", X_dataset[0])
+        cv2.waitKey(3)
+
+        
+
+    def num_to_char(self, num):
         if num <= 25:
             return chr(ord('A')+num)
         else:
