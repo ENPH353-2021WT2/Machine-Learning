@@ -76,7 +76,7 @@ class plateFinder:
         self.plate_num = 1
         self.bridge = CvBridge()
         self.pub_str = ''
-        self.conv_model = models.load_model('my_model1')
+        self.conv_model = models.load_model('my_model2')
         print(self.conv_model.summary())
         self.errorFolder = "/home/fizzer/ros_ws/src/Machine-Learning/output_images/err"
         if not self.DEBUG: #typical analysis with photos from Gazebo
@@ -383,6 +383,14 @@ class plateFinder:
         X_dataset_norm = X_dataset_orig/255.0
         X_dataset = np.expand_dims(X_dataset_norm, axis=-1)
 
+
+        Path = '/home/fizzer/ros_ws/src/my_controller/Machine-Learning/images/'
+        img_ID = str(time.time())[0:10]
+        cv2.imwrite(Path + img_ID + 'test.jpg', X_dataset_orig[0])
+        cv2.imwrite(Path + img_ID + 'test1.jpg', X_dataset_orig[1])
+        cv2.imwrite(Path + img_ID + 'test2.jpg', X_dataset_orig[2])
+        cv2.imwrite(Path + img_ID + 'test3.jpg', X_dataset_orig[3])
+
         global sess1
         global graph1
         with graph1.as_default():
@@ -403,8 +411,8 @@ class plateFinder:
             print(pred_char4)
             print(" ")
 
-        cv2.imshow("X_dataset", X_dataset[0])
-        cv2.waitKey(3)
+        # cv2.imshow("X_dataset", X_dataset[0])
+        # cv2.waitKey(3)
 
         # String message to publish
         self.pub_str = 'TeamRed,multi21,' + str(self.plate_num) + ',' + str(pred_char1) + str(pred_char2) + str(pred_char3) + str(pred_char4)
