@@ -34,8 +34,12 @@ class plateFinder:
         Changes input from live driving feed to file directory of images
     counter : int
         For debugging, allows us to save photos with unique filenames
-    timer : float
-        To time how long license plate data has not been detected by robot 
+    last_license_time : float
+        To time how long license plate data has not been detected by robot
+    pub_str : str
+        String to publish to score tracker after best prediction finalized
+    conv_model : CNN
+        CNN model to validate license plate characters 
     errorFolder : string
         Rejected license plates are saved to this folder
     bridge : CvBridge
