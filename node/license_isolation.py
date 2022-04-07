@@ -165,7 +165,8 @@ class plateFinder:
         # Checks if current plate was published already and if it is last image
         if self.published_plate == False and time.time() >= self.last_license_time + 1:
             print(self.plate_index)
-            self.license_pub.publish(self.pub_str)
+            if self.plate_index < 8:
+                self.license_pub.publish(self.pub_str)
             self.license_index_pub.publish(self.plate_index)
             self.plate_index += 1
             self.published_plate = True
