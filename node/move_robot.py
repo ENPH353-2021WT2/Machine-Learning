@@ -64,7 +64,7 @@ class Robot_Controller:
 
 	COMPETITION_TIME = 5
 	DEBUG = False
-	LEFT_TURN_TIME = 1.5
+	LEFT_TURN_TIME = 0.6
 	RED_THRESHOLD = 5000
 	PED_WHITE_THRESHOLD = 1000
 
@@ -112,9 +112,9 @@ class Robot_Controller:
 			self.startup_flag = False
 
 		# After elapsed time, sends stop command
-		if (time.time() > self.startup_time + self.COMPETITION_TIME) and (self.stop_flag == False):
-			self.license_pub.publish(str('TeamRed,multi21,-1,XR58'))
-			self.stop_flag = True
+		# if (time.time() > self.startup_time + self.COMPETITION_TIME) and (self.stop_flag == False):
+		# 	self.license_pub.publish(str('TeamRed,multi21,-1,XR58'))
+		# 	self.stop_flag = True
 
 		
 		### STATE MACHINE BELOW ###

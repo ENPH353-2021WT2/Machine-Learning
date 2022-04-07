@@ -10,7 +10,18 @@ import time
 import os
 import matplotlib.pyplot as plt
 import numpy as np
+import tensorflow as tf
+from tensorflow import keras
 
+# %tensorflow_version 1.14.0
+# from tensorflow.keras import layers
+from tensorflow.keras import models
+from tensorflow.python.keras.backend import set_session
+from tensorflow.python.keras.models import load_model
+
+sess1 = tf.Session()
+graph1 = tf.get_default_graph()
+set_session(sess1)
 
 class plateFinder:
     """
@@ -23,6 +34,12 @@ class plateFinder:
         Changes input from live driving feed to file directory of images
     counter : int
         For debugging, allows us to save photos with unique filenames
+    last_license_time : float
+        To time how long license plate data has not been detected by robot
+    pub_str : str
+        String to publish to score tracker after best prediction finalized
+    conv_model : CNN
+        CNN model to validate license plate characters 
     errorFolder : string
         Rejected license plates are saved to this folder
     bridge : CvBridge
@@ -45,6 +62,7 @@ class plateFinder:
         List of contours corresp. to currThresh sorted by area
     """
     DEBUG = False
+    PLATE_IDS = [2,3,4,5,6,1,7,8]
     def __init__(self):
         """Sets up all instance variables, mainly pub/sub and timing.
 
@@ -54,11 +72,18 @@ class plateFinder:
         If DEBUG, images come from a folder instead of ROS.
         """
         self.counter = 0
+        self.last_license_time = time.time()
+        self.published_plate = True
+        self.plate_index = 0
         self.bridge = CvBridge()
+        self.pub_str = ''
+        self.conv_model = models.load_model('my_model4')
+        print(self.conv_model.summary())
         self.errorFolder = "/home/fizzer/ros_ws/src/Machine-Learning/output_images/err"
         if not self.DEBUG: #typical analysis with photos from Gazebo
             rospy.init_node('license_plate_analysis')
             self.license_photo_pub = rospy.Publisher('R1/license_photo', Image, queue_size=1)
+            self.license_pub = rospy.Publisher('/license_plate', String, queue_size=1)
             time.sleep(1)
             self.image_sub = rospy.Subscriber('/R1/pi_camera/image_raw', Image, self.callback)
             rospy.spin()
@@ -131,6 +156,13 @@ class plateFinder:
                 return
             elif self.DEBUG:
                 return outimg
+
+        # Checks if current plate was published already and if it is last image
+        if self.published_plate == False and time.time() >= self.last_license_time + 1:
+            self.license_pub.publish(self.pub_str)
+            print(self.pub_str)
+            self.plate_index += 1
+            self.published_plate = True
 
     def plateIsolation(self, imgmsg):
         """Processes driving feed to show just the big rectangles from the license rears of cars.
@@ -270,7 +302,7 @@ class plateFinder:
             cv2.imwrite(self.outFolder + "/diag/" + str(self.counter) + "plate.png", thresh)
         # if not self.DEBUG:
         #     self.publishPlatePhoto(thresh)
-        print("Contour Length: " + str(len(contours)))
+        # print("Contour Length: " + str(len(contours)))
         if len(contours) < 4:
             cv2.imwrite(self.errorFolder + "/" + str(self.counter) + "plate.png", img)
             return False
@@ -278,8 +310,11 @@ class plateFinder:
         cntSort = sorted(contours, key=cv2.contourArea, reverse=True)
         sumTopFour = 0
         for cnt in cntSort[:4]:
-            sumTopFour += cv2.contourArea(cnt)
-        print(sumTopFour)
+            area = cv2.contourArea(cnt)
+            sumTopFour += area
+            if area < 10:
+                return False
+            # print(sumTopFour)
         if sumTopFour < 180:
             return False
 
@@ -302,13 +337,11 @@ class plateFinder:
         ----------
         String containing the letters of the license plate.
         """
-        newImg = self.currPlate
-        #Draw a rectangle on the top four contours
+                #Draw a rectangle on the top four contours
         letters = [0,1,2,3]
         for i, cnt in enumerate(self.currContours[:4]):
             x,y,w,h = cv2.boundingRect(cnt)
             letters[i] = [x,y,w,h]
-            # newImg = cv2.rectangle(newImg,(x,y),(x+w,y+h),(0,255,0),1)
 
         #sort letters by x-dimension
         #https://stackoverflow.com/questions/3121979/how-to-sort-a-list-tuple-of-lists-tuples-by-the-element-at-a-given-index
@@ -327,8 +360,8 @@ class plateFinder:
         maxWidth = max(sortedLetters, key=lambda wid:wid[2])[-1]
 
         #Hard-coded dimension for resizing
-        maxDim = 25
-        testCanvas = np.ones((maxDim * 5, maxDim, 3), np.uint8)
+        maxDim = 32
+        testCanvas = np.ones((maxDim * 5, maxDim), np.uint8)
         testCanvas *= 255
         currHeight = 0
         letterImages = [0,1,2,3]
@@ -339,18 +372,70 @@ class plateFinder:
             w = let[2]
             h = let[3]
 
-            letterImages[i] = cv2.resize(self.currPlate[y:y+h,x:x+w], (maxDim, maxDim))
+            letterImages[i] = cv2.resize(self.currThresh[y:y+h,x:x+w], (maxDim, maxDim))
+            # b, letterImages[i] = cv2.threshold(letterImages[i], 100, 255, cv2.THRESH_BINARY)
             testCanvas[currHeight:currHeight+maxDim,0:maxDim] = letterImages[i]
             currHeight += maxDim + 1
+
             
         if not self.DEBUG:
             self.publishPlatePhoto(testCanvas)
-        elif self.DEBUG:
-            cv2.imshow('plate', newImg)
-            cv2.waitKey(0)
-            cv2.destroyAllWindows()
 
         #letterImages can now be sent to NN for analysis
+        X_dataset_orig = np.array(letterImages)
+
+        # Normalize dataset
+        X_dataset_norm = X_dataset_orig/255.0
+        X_dataset = np.expand_dims(X_dataset_norm, axis=-1)
+
+
+        # Saves images to local folder
+        # Path = '/home/fizzer/ros_ws/src/my_controller/Machine-Learning/images/'
+        # img_ID = str(time.time())[0:10]
+        # cv2.imwrite(Path + img_ID + 'test.jpg', X_dataset_orig[0])
+        # cv2.imwrite(Path + img_ID + 'test1.jpg', X_dataset_orig[1])
+        # cv2.imwrite(Path + img_ID + 'test2.jpg', X_dataset_orig[2])
+        # cv2.imwrite(Path + img_ID + 'test3.jpg', X_dataset_orig[3])
+
+        global sess1
+        global graph1
+        with graph1.as_default():
+            set_session(sess1)
+            pred = self.conv_model.predict(X_dataset)
+            print(pred.shape)
+
+            pred_num1 = np.argmax(pred[0][0:26])
+            pred_num2 = np.argmax(pred[1][0:26])
+            pred_num3 = np.argmax(pred[2][26:36]) + 26
+            pred_num4 = np.argmax(pred[3][26:36]) + 26
+            pred_char1 = self.num_to_char(pred_num1)
+            pred_char2 = self.num_to_char(pred_num2)
+            pred_char3 = self.num_to_char(pred_num3)
+            pred_char4 = self.num_to_char(pred_num4)
+            print(pred_char1)
+            print(pred_char2)
+            print(pred_char3)
+            print(pred_char4)
+            print(" ")
+
+        # cv2.imshow("X_dataset", X_dataset[0])
+        # cv2.waitKey(3)
+
+        # String message to publish
+        self.pub_str = 'TeamRed,multi21,' + str(self.PLATE_IDS[self.plate_index]) + ',' + str(pred_char1) + str(pred_char2) + str(pred_char3) + str(pred_char4)
+
+        # Update last time a license plate was detected
+        self.last_license_time = time.time()
+
+        # Unables publishing again
+        self.published_plate = False
+
+        
+    def num_to_char(self, num):
+        if num <= 25:
+            return chr(ord('A')+num)
+        else:
+            return chr(ord('0')+num-26)
 
     def publishPlatePhoto(self, isolatedPlates):
         """Publishes a diagnostic photo of the road with just license plate to
@@ -361,7 +446,7 @@ class plateFinder:
         isolatedRoad : Image
             Driving feed processed to just a road in black-and-white
         """
-        image_message = self.bridge.cv2_to_imgmsg(isolatedPlates, encoding="rgb8")
+        image_message = self.bridge.cv2_to_imgmsg(isolatedPlates, encoding="passthrough")
         self.license_photo_pub.publish(image_message)
 
 if __name__ == '__main__':
