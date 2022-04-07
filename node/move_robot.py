@@ -54,7 +54,7 @@ class Robot_Controller:
 		Used to turn car left without changing state
 	ignore_red_flag : boolean
 		Used to bypass other red line after having stopped for pedestrian
-	first_run: boolean
+	first_run_flag: boolean
 		Used to indicate when pedestrian state is run for first time
 	startup_time : float
 		keeps track of competition duration.
@@ -66,7 +66,7 @@ class Robot_Controller:
 
 	COMPETITION_TIME = 5
 	DEBUG = False
-	LEFT_TURN_TIME = 0.6
+	LEFT_TURN_TIME = 0.5
 	RED_THRESHOLD = 5000
 	PED_WHITE_THRESHOLD = 1000
 
@@ -82,7 +82,12 @@ class Robot_Controller:
 		self.stop_flag = False
 		self.left_turn_flag = True
 		self.ignore_red_flag = False
-		self.first_run = True
+		self.first_run_flag = True
+		self.wait_for_car_flag = False
+		self.drive_loop_flag = False
+		self.mega_left_turn_flag = False
+		self.delaying_before_left = False
+		self.inner_loop = False
 		# Size of raw image (720, 1280, 3)
 		self.prev_frame = np.zeros((720, 1280, 3))
 		self.bridge = CvBridge()
@@ -94,6 +99,9 @@ class Robot_Controller:
 		self.startup_time = time.time()
 		self.pedestrian_start_time = 0
 		self.inner_loop_time = 0
+		self.wait_car_time = 0
+		self.start_loop_time = 0
+		self.turning_time = time.time() * 10
 		self.image_sub = rospy.Subscriber('/R1/pi_camera/image_raw', Image, self.linefind)
 		self.plate_index_sub = rospy.Subscriber('/license_index', Int32, self.getIndex)
 		rospy.spin()
@@ -101,9 +109,10 @@ class Robot_Controller:
 
 	def getIndex(self, data):
 		print(data)
-		if data.data == 1:
-			self.left_turn_flag = True
+		if data.data == 5:
+			# self.left_turn_flag = True
 			self.inner_loop_time = time.time()
+			self.delaying_before_left = True
 			self.drive_state = Robot_State.INNER_LOOP
 
 	def linefind(self, data):
@@ -137,9 +146,9 @@ class Robot_Controller:
 			
 			current_frame = self.getPedestrianFrame(data)
 			# If first loop, use same image
-			if self.first_run:
+			if self.first_run_flag:
 				self.prev_frame = current_frame
-				self.first_run = False
+				self.first_run_flag = False
 
 			# print(current_frame.shape)
 			
@@ -179,10 +188,11 @@ class Robot_Controller:
 		
 		# Driving State
 		elif self.drive_state == Robot_State.DRIVE_FORWARD:
+			print(self.inner_loop)
 
-
-			# Want robot to turn left on startup, for a specified amount of time
-			if time.time() > self.startup_time + self.LEFT_TURN_TIME:
+			# Want robot to turn left on startup, for a specified amount of time 
+			factor = 1 if not self.inner_loop else 3
+			if time.time() > self.startup_time + self.LEFT_TURN_TIME * factor:
 				self.left_turn_flag = False
 
 			#Processes camera feed to just show the road.
@@ -194,11 +204,11 @@ class Robot_Controller:
 				biggestContour=max(contours, key=cv2.contourArea)
 			except:
 				forward = 0
-				turn = 3
+				turn = -3 if self.inner_loop else 3
 				self.sendDriveCommand(forward, turn)
 			if cv2.contourArea(biggestContour) < 1000: #why 1000
 				forward = 0
-				turn = 3
+				turn = -3 if self.inner_loop else 3
 				self.sendDriveCommand(forward, turn)
 				return
 			moment_array=cv2.moments(biggestContour)
@@ -213,7 +223,7 @@ class Robot_Controller:
 			minTurnAmount = -maxTurnAmount
 			width = len(roadPhoto[0])
 			turn = self.turnRange(cx, 0, width, minTurnAmount, maxTurnAmount)
-			forward = 0.4
+			forward = 0.3 if self.inner_loop else 0.4
 			self.sendDriveCommand(forward, -turn)
 			# rospy.loginfo("Forward value: " + str(forward)  + "Turn value: " + str(turn))
 
@@ -235,15 +245,47 @@ class Robot_Controller:
 
 		#Inner loop state
 		elif self.drive_state == Robot_State.INNER_LOOP:
-			if time.time() >= self.inner_loop_time + 1.5:
-				self.sendDriveCommand(0, 0)
+
+			#After a set delay, start turning left.
+			if time.time() >= self.inner_loop_time + 0.5 and self.delaying_before_left:
+				self.mega_left_turn_flag = True
+				self.left_turn_flag = False
+				self.delaying_before_left = False
+				self.turning_time = time.time()
+
+			#STOP the car. enter vehicle detection mode. Keep the left turn flag.
+			if time.time() >= self.turning_time + 0.9 and not self.wait_for_car_flag:
+				self.sendDriveCommand(0,0)
+				self.wait_for_car_flag = True
+				self.wait_car_time = time.time()
 				return
+
+			#Vehicle detection time
+			if self.wait_for_car_flag and not self.drive_loop_flag:
+				#Continue to wait..
+				self.sendDriveCommand(0,0)
+				#Do detection. if we decide it's safe, set drive_loop_flag to true
+				#Currently waiting 1 second before continuing (signal by wait_car_time)
+				if time.time() >= self.wait_car_time + 1:
+					# self.drive_loop_flag = True
+					# self.start_loop_time = time.time()
+					self.mega_left_turn_flag = False
+					self.left_turn_flag = True
+					self.drive_state = Robot_State.DRIVE_FORWARD
+					self.startup_time = time.time()
+					self.inner_loop = True
+				return
+
+			# if time.time() >= self.start_loop_time + 2 and self.drive_loop_flag:
+			# 	#Driving like normal now. It'll keep setting both left_turns to false.
+				
+			# 	return
 
 			roadPhoto = self.roadIsolation(data)
 
 			#Logic for driving
 			contours,hierarchy = cv2.findContours(roadPhoto, cv2.RETR_TREE,cv2.CHAIN_APPROX_SIMPLE)[-2:]
-		
+			
 			try:
 				biggestContour=max(contours, key=cv2.contourArea)
 			except:
@@ -263,13 +305,20 @@ class Robot_Controller:
 				print("divide by zero in moments")
 
 			#Determining Driving Command
+			# if self.mega_left_turn_flag:
+			# 	maxTurnAmount = 10
+			# 	minTurnAmount = -maxTurnAmount
+			# else:
 			maxTurnAmount = 5
 			minTurnAmount = -maxTurnAmount
 			width = len(roadPhoto[0])
+			if self.mega_left_turn_flag:
+				cx -= 50
 			turn = self.turnRange(cx, 0, width, minTurnAmount, maxTurnAmount)
 			forward = 0.4
 			self.sendDriveCommand(forward, -turn)
 			# rospy.loginfo("Forward value: " + str(forward)  + "Turn value: " + str(turn))
+			self.publishRoadCenter(roadPhoto, (cx, cy))
 
 
 	def roadIsolation(self, imgmsg):
@@ -285,10 +334,17 @@ class Robot_Controller:
 		width = len(cv_image[0])
 
 		# Depending on left turn or not, will crop the image accordingly
-		if not self.left_turn_flag:
-			cv_image_cropped = cv_image[-400:-200,500:width-500]
-		else:
+		# if not self.left_turn_flag:
+		# 	cv_image_cropped = cv_image[-400:-200,500:width-500]
+		# else :
+		# 	cv_image_cropped = cv_image[-400:-1,600:width]
+
+		if self.left_turn_flag:
 			cv_image_cropped = cv_image[-400:-1,600:width]
+		else:
+			cv_image_cropped = cv_image[-400:-200,500:width-500]
+
+
 
 		#convert photo to HSV and isolate for road with mask
 		imHSV = cv2.cvtColor(cv_image_cropped, cv2.COLOR_RGB2HSV)
