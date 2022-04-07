@@ -62,6 +62,7 @@ class plateFinder:
         List of contours corresp. to currThresh sorted by area
     """
     DEBUG = False
+    PLATE_IDS = [2,3,4,5,6,1,7,8]
     def __init__(self):
         """Sets up all instance variables, mainly pub/sub and timing.
 
@@ -73,7 +74,7 @@ class plateFinder:
         self.counter = 0
         self.last_license_time = time.time()
         self.published_plate = True
-        self.plate_num = 1
+        self.plate_index = 0
         self.bridge = CvBridge()
         self.pub_str = ''
         self.conv_model = models.load_model('my_model4')
@@ -160,7 +161,7 @@ class plateFinder:
         if self.published_plate == False and time.time() >= self.last_license_time + 1:
             self.license_pub.publish(self.pub_str)
             print(self.pub_str)
-            self.plate_num += 1
+            self.plate_index += 1
             self.published_plate = True
 
     def plateIsolation(self, imgmsg):
@@ -421,7 +422,7 @@ class plateFinder:
         # cv2.waitKey(3)
 
         # String message to publish
-        self.pub_str = 'TeamRed,multi21,' + str(self.plate_num) + ',' + str(pred_char1) + str(pred_char2) + str(pred_char3) + str(pred_char4)
+        self.pub_str = 'TeamRed,multi21,' + str(self.PLATE_IDS[self.plate_index]) + ',' + str(pred_char1) + str(pred_char2) + str(pred_char3) + str(pred_char4)
 
         # Update last time a license plate was detected
         self.last_license_time = time.time()
