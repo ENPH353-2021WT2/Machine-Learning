@@ -6,6 +6,7 @@ from sensor_msgs.msg import Image
 from cv_bridge import CvBridge
 import cv2
 from std_msgs.msg import String
+from std_msgs.msg import Int32
 import time
 import os
 import matplotlib.pyplot as plt
@@ -84,6 +85,7 @@ class plateFinder:
             rospy.init_node('license_plate_analysis')
             self.license_photo_pub = rospy.Publisher('R1/license_photo', Image, queue_size=1)
             self.license_pub = rospy.Publisher('/license_plate', String, queue_size=1)
+            self.license_index_pub = rospy.Publisher('/license_index', Int32, queue_size=1)
             time.sleep(1)
             self.image_sub = rospy.Subscriber('/R1/pi_camera/image_raw', Image, self.callback)
             rospy.spin()
@@ -157,10 +159,14 @@ class plateFinder:
             elif self.DEBUG:
                 return outimg
 
+        #Publish for move_robot to know what plate we're on
+        
+
         # Checks if current plate was published already and if it is last image
         if self.published_plate == False and time.time() >= self.last_license_time + 1:
+            print(self.plate_index)
             self.license_pub.publish(self.pub_str)
-            print(self.pub_str)
+            self.license_index_pub.publish(self.plate_index)
             self.plate_index += 1
             self.published_plate = True
 
@@ -267,12 +273,10 @@ class plateFinder:
         imgRatio = x_dim / y_dim
 
         if imgRatio >largestRatio:
+            print("Rejected for having a large ratio. " + str(imgRatio))
             return False
         if imgRatio < lowestRatio:
-            return False
-
-        #Checking if 2 adjacent pixels are the same
-        if np.all(img[0][0] == img[0][1]):
+            print("Rejected for having a small ratio. " + str(imgRatio))
             return False
 
         #Checking if there are 4 blobs in the license plate
@@ -304,18 +308,24 @@ class plateFinder:
         #     self.publishPlatePhoto(thresh)
         # print("Contour Length: " + str(len(contours)))
         if len(contours) < 4:
-            cv2.imwrite(self.errorFolder + "/" + str(self.counter) + "plate.png", img)
+            cv2.imwrite(self.errorFolder + "/" + str(time.time()) + "plate.png", img)
+            print("Rejected for having fewer than 4 contours. " + str(len(contours)))
             return False
 
         cntSort = sorted(contours, key=cv2.contourArea, reverse=True)
         sumTopFour = 0
+        print("Areas: ")
         for cnt in cntSort[:4]:
             area = cv2.contourArea(cnt)
             sumTopFour += area
-            if area < 10:
+            print(area)
+            if area < 5:
+                print("rejected for low individual area. ")
                 return False
-            # print(sumTopFour)
-        if sumTopFour < 180:
+        
+        print("SumTopFour: " + str(sumTopFour))
+        if sumTopFour < 100:
+            print("Rejected for low sum area. ")
             return False
 
         #If we're here, then we've passed all the tests and believe this is a valid plate.
@@ -422,7 +432,9 @@ class plateFinder:
         # cv2.waitKey(3)
 
         # String message to publish
-        self.pub_str = 'TeamRed,multi21,' + str(self.PLATE_IDS[self.plate_index]) + ',' + str(pred_char1) + str(pred_char2) + str(pred_char3) + str(pred_char4)
+        if self.plate_index < 8:
+            self.pub_str = 'TeamRed,multi21,' + str(self.PLATE_IDS[self.plate_index]) + ',' + str(pred_char1) + str(pred_char2) + str(pred_char3) + str(pred_char4)
+        #otherwise just use the old string
 
         # Update last time a license plate was detected
         self.last_license_time = time.time()
