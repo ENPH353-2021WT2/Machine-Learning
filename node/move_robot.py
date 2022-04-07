@@ -64,11 +64,13 @@ class Robot_Controller:
 		Used to convert cv2 images to/from imgmsg for pub/sub
     """
 
-	COMPETITION_TIME = 5
+	COMPETITION_TIME = 240
 	DEBUG = False
 	LEFT_TURN_TIME = 0.5
 	RED_THRESHOLD = 5000
 	PED_WHITE_THRESHOLD = 1000
+	SAMPLE_WINDOW = 0.5
+	CAR_WHITE_THRESHOLD = 2000
 
 	def __init__(self):
 		"""Sets up all instance variables, mainly pub/sub and timing.
@@ -87,9 +89,13 @@ class Robot_Controller:
 		self.drive_loop_flag = False
 		self.mega_left_turn_flag = False
 		self.delaying_before_left = False
+		self.first_run_v_flag = True
 		self.inner_loop = False
 		# Size of raw image (720, 1280, 3)
+		self.plate_index = 0
+		self.currMax = 0
 		self.prev_frame = np.zeros((720, 1280, 3))
+		self.prev_v_frame = np.zeros((720, 1280, 3))
 		self.bridge = CvBridge()
 		self.driving_pub = rospy.Publisher('/R1/cmd_vel', Twist, queue_size=1)
 		self.license_pub = rospy.Publisher('/license_plate', String, queue_size=1)
@@ -102,6 +108,7 @@ class Robot_Controller:
 		self.wait_car_time = 0
 		self.start_loop_time = 0
 		self.turning_time = time.time() * 10
+		self.start_sample_time = 0
 		self.image_sub = rospy.Subscriber('/R1/pi_camera/image_raw', Image, self.linefind)
 		self.plate_index_sub = rospy.Subscriber('/license_index', Int32, self.getIndex)
 		rospy.spin()
@@ -114,6 +121,8 @@ class Robot_Controller:
 			self.inner_loop_time = time.time()
 			self.delaying_before_left = True
 			self.drive_state = Robot_State.INNER_LOOP
+
+		self.plate_index = data.data
 
 	def linefind(self, data):
 		"""Callback function that receives car video feed for processing
@@ -131,9 +140,9 @@ class Robot_Controller:
 			self.startup_flag = False
 
 		# After elapsed time, sends stop command
-		# if (time.time() > self.startup_time + self.COMPETITION_TIME) and (self.stop_flag == False):
-		# 	self.license_pub.publish(str('TeamRed,multi21,-1,XR58'))
-		# 	self.stop_flag = True
+		if ((time.time() > self.startup_time + self.COMPETITION_TIME) and (self.stop_flag == False)) or self.plate_index >= 7:
+			self.license_pub.publish(str('TeamRed,multi21,-1,XR58'))
+			self.stop_flag = True
 
 		
 		### STATE MACHINE BELOW ###
@@ -258,28 +267,55 @@ class Robot_Controller:
 				self.sendDriveCommand(0,0)
 				self.wait_for_car_flag = True
 				self.wait_car_time = time.time()
+				self.start_sample_time = time.time() + self.SAMPLE_WINDOW
 				return
 
 			#Vehicle detection time
 			if self.wait_for_car_flag and not self.drive_loop_flag:
 				#Continue to wait..
-				self.sendDriveCommand(0,0)
-				#Do detection. if we decide it's safe, set drive_loop_flag to true
-				#Currently waiting 1 second before continuing (signal by wait_car_time)
-				if time.time() >= self.wait_car_time + 1:
-					# self.drive_loop_flag = True
-					# self.start_loop_time = time.time()
-					self.mega_left_turn_flag = False
-					self.left_turn_flag = True
-					self.drive_state = Robot_State.DRIVE_FORWARD
-					self.startup_time = time.time()
-					self.inner_loop = True
-				return
+				# self.sendDriveCommand(0,0)
+				current_v_frame = self.getVehicleFrame(data)
+				# If first loop, use same image
+				if self.first_run_v_flag:
+					self.prev_v_frame = current_v_frame
+					self.first_run_v_flag = False
 
-			# if time.time() >= self.start_loop_time + 2 and self.drive_loop_flag:
-			# 	#Driving like normal now. It'll keep setting both left_turns to false.
+				# print(current_frame.shape)
 				
-			# 	return
+				cv2.imshow("frame", self.prev_v_frame)
+				cv2.waitKey(3)
+				gray_current = cv2.cvtColor(current_v_frame, cv2.COLOR_BGR2GRAY)
+				gray_prev = cv2.cvtColor(self.prev_v_frame, cv2.COLOR_BGR2GRAY)
+
+
+				# Compute difference image
+				difference_img = cv2.absdiff(gray_current, gray_prev)
+				ret, thresh = cv2.threshold(difference_img, 30, 255, cv2.THRESH_BINARY)
+				image_message = self.bridge.cv2_to_imgmsg(thresh, encoding="passthrough")
+				self.crosswalk_pub.publish(image_message)
+
+				self.prev_v_frame = current_v_frame
+
+				# Detects car movement in front of robot
+				if time.time() > self.wait_car_time + 0.5:
+					Y, X = np.where(thresh==255)
+					print("Number of white points: ", len(X))
+					if time.time() < self.start_sample_time + self.SAMPLE_WINDOW:
+						if len(X) > self.currMax: 
+							self.currMax = len(X)
+						print(self.currMax)
+					else:
+						if self.currMax < self.CAR_WHITE_THRESHOLD:
+							self.mega_left_turn_flag = False
+							self.left_turn_flag = True
+							self.drive_state = Robot_State.DRIVE_FORWARD
+							self.startup_time = time.time()
+							self.inner_loop = True
+							print("Safe to go!")
+ 
+						self.start_sample_time = time.time()
+						self.currMax = 0
+				return	
 
 			roadPhoto = self.roadIsolation(data)
 
@@ -469,6 +505,14 @@ class Robot_Controller:
 		width = len(cv_image[0])
 		cv_image = cv_image[200:height-200,300:width-300]
 		return cv_image
+
+	def getVehicleFrame(self, imgmsg):
+		cv_image = self.bridge.imgmsg_to_cv2(imgmsg, desired_encoding='passthrough')
+		height = len(cv_image)
+		width = len(cv_image[0])
+		cv_image = cv_image[height/2:height,width/2:width]
+		return cv_image
+
 
 if __name__ == '__main__':
 	Robot_Controller()

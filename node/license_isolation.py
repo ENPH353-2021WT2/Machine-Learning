@@ -164,9 +164,9 @@ class plateFinder:
 
         # Checks if current plate was published already and if it is last image
         if self.published_plate == False and time.time() >= self.last_license_time + 1:
-            self.license_index_pub.publish(self.plate_index)
             print(self.plate_index)
             self.license_pub.publish(self.pub_str)
+            self.license_index_pub.publish(self.plate_index)
             self.plate_index += 1
             self.published_plate = True
 
@@ -273,12 +273,10 @@ class plateFinder:
         imgRatio = x_dim / y_dim
 
         if imgRatio >largestRatio:
+            print("Rejected for having a large ratio. " + str(imgRatio))
             return False
         if imgRatio < lowestRatio:
-            return False
-
-        #Checking if 2 adjacent pixels are the same
-        if np.all(img[0][0] == img[0][1]):
+            print("Rejected for having a small ratio. " + str(imgRatio))
             return False
 
         #Checking if there are 4 blobs in the license plate
@@ -310,18 +308,24 @@ class plateFinder:
         #     self.publishPlatePhoto(thresh)
         # print("Contour Length: " + str(len(contours)))
         if len(contours) < 4:
-            cv2.imwrite(self.errorFolder + "/" + str(self.counter) + "plate.png", img)
+            cv2.imwrite(self.errorFolder + "/" + str(time.time()) + "plate.png", img)
+            print("Rejected for having fewer than 4 contours. " + str(len(contours)))
             return False
 
         cntSort = sorted(contours, key=cv2.contourArea, reverse=True)
         sumTopFour = 0
+        print("Areas: ")
         for cnt in cntSort[:4]:
             area = cv2.contourArea(cnt)
             sumTopFour += area
-            if area < 10:
+            print(area)
+            if area < 5:
+                print("rejected for low individual area. ")
                 return False
-            # print(sumTopFour)
-        if sumTopFour < 180:
+        
+        print("SumTopFour: " + str(sumTopFour))
+        if sumTopFour < 100:
+            print("Rejected for low sum area. ")
             return False
 
         #If we're here, then we've passed all the tests and believe this is a valid plate.
