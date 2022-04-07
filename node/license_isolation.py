@@ -72,7 +72,7 @@ class plateFinder:
         """
         self.counter = 0
         self.last_license_time = time.time()
-        self.published_plate = False
+        self.published_plate = True
         self.plate_num = 1
         self.bridge = CvBridge()
         self.pub_str = ''
@@ -159,6 +159,7 @@ class plateFinder:
         # Checks if current plate was published already and if it is last image
         if self.published_plate == False and time.time() >= self.last_license_time + 1:
             self.license_pub.publish(self.pub_str)
+            print(self.pub_str)
             self.plate_num += 1
             self.published_plate = True
 
@@ -308,8 +309,11 @@ class plateFinder:
         cntSort = sorted(contours, key=cv2.contourArea, reverse=True)
         sumTopFour = 0
         for cnt in cntSort[:4]:
-            sumTopFour += cv2.contourArea(cnt)
-        # print(sumTopFour)
+            area = cv2.contourArea(cnt)
+            sumTopFour += area
+            if area < 10:
+                return False
+            # print(sumTopFour)
         if sumTopFour < 180:
             return False
 
@@ -397,11 +401,12 @@ class plateFinder:
         with graph1.as_default():
             set_session(sess1)
             pred = self.conv_model.predict(X_dataset)
+            print(pred.shape)
 
-            pred_num1 = np.argmax(pred[0])
-            pred_num2 = np.argmax(pred[1])
-            pred_num3 = np.argmax(pred[2])
-            pred_num4 = np.argmax(pred[3])
+            pred_num1 = np.argmax(pred[0][0:26])
+            pred_num2 = np.argmax(pred[1][0:26])
+            pred_num3 = np.argmax(pred[2][26:36]) + 26
+            pred_num4 = np.argmax(pred[3][26:36]) + 26
             pred_char1 = self.num_to_char(pred_num1)
             pred_char2 = self.num_to_char(pred_num2)
             pred_char3 = self.num_to_char(pred_num3)
