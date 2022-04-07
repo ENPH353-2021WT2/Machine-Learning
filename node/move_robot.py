@@ -5,10 +5,12 @@ from geometry_msgs.msg import Twist
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge
 import cv2
+from std_msgs.msg import Int32
 from std_msgs.msg import String
 import time
 from robot_states import Robot_State
 import numpy as np
+
 
 class Robot_Controller:
 	"""
@@ -91,11 +93,19 @@ class Robot_Controller:
 		time.sleep(1)
 		self.startup_time = time.time()
 		self.pedestrian_start_time = 0
+		self.inner_loop_time = 0
 		self.image_sub = rospy.Subscriber('/R1/pi_camera/image_raw', Image, self.linefind)
+		self.plate_index_sub = rospy.Subscriber('/license_index', Int32, self.getIndex)
 		rospy.spin()
 
 
-	
+	def getIndex(self, data):
+		print(data)
+		if data.data == 1:
+			self.left_turn_flag = True
+			self.inner_loop_time = time.time()
+			self.drive_state = Robot_State.INNER_LOOP
+
 	def linefind(self, data):
 		"""Callback function that receives car video feed for processing
 		Note that PID is used for driving (I and D yet to be implemented)
@@ -223,6 +233,43 @@ class Robot_Controller:
 				self.pedestrian_start_time = time.time()
 				self.prev_frame = self.getPedestrianFrame()
 
+		#Inner loop state
+		elif self.drive_state == Robot_State.INNER_LOOP:
+			if time.time() >= self.inner_loop_time + 1.5:
+				self.sendDriveCommand(0, 0)
+				return
+
+			roadPhoto = self.roadIsolation(data)
+
+			#Logic for driving
+			contours,hierarchy = cv2.findContours(roadPhoto, cv2.RETR_TREE,cv2.CHAIN_APPROX_SIMPLE)[-2:]
+		
+			try:
+				biggestContour=max(contours, key=cv2.contourArea)
+			except:
+				forward = 0
+				turn = -3
+				self.sendDriveCommand(forward, turn)
+			if cv2.contourArea(biggestContour) < 1000: #why 1000
+				forward = 0
+				turn = -3
+				self.sendDriveCommand(forward, turn)
+				return
+			moment_array=cv2.moments(biggestContour)
+			try:
+				cx = int(moment_array['m10']/moment_array['m00'])
+				cy = int(moment_array['m01']/moment_array['m00'])
+			except ZeroDivisionError:
+				print("divide by zero in moments")
+
+			#Determining Driving Command
+			maxTurnAmount = 5
+			minTurnAmount = -maxTurnAmount
+			width = len(roadPhoto[0])
+			turn = self.turnRange(cx, 0, width, minTurnAmount, maxTurnAmount)
+			forward = 0.4
+			self.sendDriveCommand(forward, -turn)
+			# rospy.loginfo("Forward value: " + str(forward)  + "Turn value: " + str(turn))
 
 
 	def roadIsolation(self, imgmsg):

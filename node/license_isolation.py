@@ -6,6 +6,7 @@ from sensor_msgs.msg import Image
 from cv_bridge import CvBridge
 import cv2
 from std_msgs.msg import String
+from std_msgs.msg import Int32
 import time
 import os
 import matplotlib.pyplot as plt
@@ -84,6 +85,7 @@ class plateFinder:
             rospy.init_node('license_plate_analysis')
             self.license_photo_pub = rospy.Publisher('R1/license_photo', Image, queue_size=1)
             self.license_pub = rospy.Publisher('/license_plate', String, queue_size=1)
+            self.license_index_pub = rospy.Publisher('/license_index', Int32, queue_size=1)
             time.sleep(1)
             self.image_sub = rospy.Subscriber('/R1/pi_camera/image_raw', Image, self.callback)
             rospy.spin()
@@ -157,10 +159,14 @@ class plateFinder:
             elif self.DEBUG:
                 return outimg
 
+        #Publish for move_robot to know what plate we're on
+        
+
         # Checks if current plate was published already and if it is last image
         if self.published_plate == False and time.time() >= self.last_license_time + 1:
+            self.license_index_pub.publish(self.plate_index)
+            print(self.plate_index)
             self.license_pub.publish(self.pub_str)
-            print(self.pub_str)
             self.plate_index += 1
             self.published_plate = True
 
@@ -422,7 +428,9 @@ class plateFinder:
         # cv2.waitKey(3)
 
         # String message to publish
-        self.pub_str = 'TeamRed,multi21,' + str(self.PLATE_IDS[self.plate_index]) + ',' + str(pred_char1) + str(pred_char2) + str(pred_char3) + str(pred_char4)
+        if self.plate_index < 8:
+            self.pub_str = 'TeamRed,multi21,' + str(self.PLATE_IDS[self.plate_index]) + ',' + str(pred_char1) + str(pred_char2) + str(pred_char3) + str(pred_char4)
+        #otherwise just use the old string
 
         # Update last time a license plate was detected
         self.last_license_time = time.time()
