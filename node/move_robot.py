@@ -232,7 +232,7 @@ class Robot_Controller:
 			minTurnAmount = -maxTurnAmount
 			width = len(roadPhoto[0])
 			turn = self.turnRange(cx, 0, width, minTurnAmount, maxTurnAmount)
-			forward = 0.3 if self.inner_loop else 0.4
+			forward = 0.3 if self.inner_loop else 0.3
 			self.sendDriveCommand(forward, -turn)
 			# rospy.loginfo("Forward value: " + str(forward)  + "Turn value: " + str(turn))
 
@@ -256,7 +256,7 @@ class Robot_Controller:
 		elif self.drive_state == Robot_State.INNER_LOOP:
 
 			#After a set delay, start turning left.
-			if time.time() >= self.inner_loop_time + 0.5 and self.delaying_before_left:
+			if time.time() >= self.inner_loop_time + 0.7 and self.delaying_before_left:
 				self.mega_left_turn_flag = True
 				self.left_turn_flag = False
 				self.delaying_before_left = False
@@ -351,7 +351,7 @@ class Robot_Controller:
 			if self.mega_left_turn_flag:
 				cx -= 50
 			turn = self.turnRange(cx, 0, width, minTurnAmount, maxTurnAmount)
-			forward = 0.4
+			forward = 0.3
 			self.sendDriveCommand(forward, -turn)
 			# rospy.loginfo("Forward value: " + str(forward)  + "Turn value: " + str(turn))
 			self.publishRoadCenter(roadPhoto, (cx, cy))
@@ -377,6 +377,8 @@ class Robot_Controller:
 
 		if self.left_turn_flag:
 			cv_image_cropped = cv_image[-400:-1,600:width]
+		elif self.inner_loop:
+			cv_image_cropped = cv_image[-400:-200,450:width-550]
 		else:
 			cv_image_cropped = cv_image[-400:-200,500:width-500]
 
