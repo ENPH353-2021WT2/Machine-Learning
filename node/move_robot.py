@@ -139,8 +139,8 @@ class Robot_Controller:
 			self.license_pub.publish(str('TeamRed,multi21,0,XR58'))
 			self.startup_flag = False
 
-		# After elapsed time, sends stop command
-		if ((time.time() > self.startup_time + self.COMPETITION_TIME) and (self.stop_flag == False)) or self.plate_index >= 7:
+		# After elapsed time or after last license plate published, sends stop command
+		if ((time.time() > self.startup_time + self.COMPETITION_TIME) and not self.stop_flag) or (self.plate_index >= 7 and not self.stop_flag):
 			self.license_pub.publish(str('TeamRed,multi21,-1,XR58'))
 			self.stop_flag = True
 
